@@ -26,6 +26,7 @@ void main()
         for (int i = 0; message[i]!= '\0'; i++) {
             uart_put_char(message[i]);
         }
+        
         arch_fence();
 
         // Set a flag indicating that the secondary CPUs can start executing.
