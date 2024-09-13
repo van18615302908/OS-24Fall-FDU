@@ -6,10 +6,14 @@
 
 static volatile bool boot_secondary_cpus = false;
 
+
 void main()
 {
     if (cpuid() == 0) {
         /* @todo: Clear BSS section.*/
+
+        extern char edata[], end[];
+        memset(edata, 0, (usize)(end - edata));
 
         smp_init();
         uart_init();
@@ -22,6 +26,7 @@ void main()
         for (int i = 0; message[i]!= '\0'; i++) {
             uart_put_char(message[i]);
         }
+        
         arch_fence();
 
         // Set a flag indicating that the secondary CPUs can start executing.
