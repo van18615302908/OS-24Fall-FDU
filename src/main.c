@@ -16,7 +16,12 @@ void main()
         printk_init();
 
         /* @todo: Print "Hello, world! (Core 0)" */
+        // uart_put_char('Hello, world! (Core 0)');
 
+        const char *message = "Hello, world! (Core 0)\n";
+        for (int i = 0; message[i]!= '\0'; i++) {
+            uart_put_char(message[i]);
+        }
         arch_fence();
 
         // Set a flag indicating that the secondary CPUs can start executing.
@@ -27,6 +32,13 @@ void main()
         arch_fence();
 
         /* @todo: Print "Hello, world! (Core <core id>)" */
+        const char *message = "Hello, world! (Core ";
+        for (int i = 0; message[i]!= '\0'; i++) {
+            uart_put_char(message[i]);
+        }
+        uart_put_char((char)('0' + cpuid())); // 将核心编号转换为对应的字符并输出
+        uart_put_char(')');
+        uart_put_char('\n');
     }
 
     set_return_addr(idle_entry);
