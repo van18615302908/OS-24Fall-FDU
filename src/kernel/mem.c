@@ -21,6 +21,31 @@ static SpinLock mem_lock;
 
 extern char end[];  // 内核结束地址，空闲页从此地址之后开始
 
+
+
+
+// 从链表尾部开始打印
+void print_list_from_tail() {
+    // 获取链表的尾节点
+    ListNode* node = free_pages_list.prev;
+    
+    printk("Printing free pages from tail:\n");
+    
+    // 从尾节点开始，向前遍历，直到链表头部
+    for (int i = 0; i < 10 && node != &free_pages_list; i++) {
+        FreePage* page = (FreePage*)node;
+        printk("Page at address: %p\n", page);
+        node = node->prev;
+    }
+}
+
+
+
+
+
+
+
+
 void kinit() {
     init_rc(&kalloc_page_cnt);  // 初始化页面计数器，！不许修改！
 
@@ -40,15 +65,6 @@ void kinit() {
         kfree_page(page);  // 将每个页面放入空闲链表中
     }
 
-    // 打印空闲页链表
-    ListNode* node = free_pages_list.prev;
-    printk("Printing free pages from tail:\n");
-    // 从尾节点开始，向前遍历，直到链表头部
-    for (int i = 0; i < 10 && node != &free_pages_list; i++) {
-        FreePage* page = (FreePage*)node;
-        printk("Page at address: %p\n", page);
-        node = node->prev;
-    }
 }
 
 void* kalloc_page() {
@@ -60,16 +76,19 @@ void* kalloc_page() {
         return NULL;
     }
 
+    // print_list_from_tail();  // 打印空闲页链表
+
     // 从空闲链表中取出第一个页面节点
-    ListNode* node = _detach_from_list(free_pages_list.next);
-    FreePage* page = (FreePage*)node;
-    printk("kalloc_page: page=%p\n", page);
+    ListNode* node = _detach_from_list(free_pages_list.next);  // 先移除节点
+    FreePage* page = (FreePage*)node;  // 将移除的节点转换为 FreePage 类型
+    
+    // printk("kalloc_page: page=%p\n", page);
     // 检查页面地址是否对齐
     if ((u64)page & (PAGE_SIZE - 1)) {
-    release_spinlock(&mem_lock);
-    printk("kalloc_page:返回未对齐的页面地址 %p\n", page);
-    return NULL;
-}
+        release_spinlock(&mem_lock);
+        printk("kalloc_page:返回未对齐的页面地址 %p\n", page);
+        return NULL;
+    }
 
     increment_rc(&kalloc_page_cnt);  // 更新分配页面计数
 
