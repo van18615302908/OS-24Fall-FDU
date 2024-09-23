@@ -7,73 +7,68 @@
 
 RefCount kalloc_page_cnt;
 
-// 用于追踪空闲页的链表节点结构
+// 定义一个空闲页链表结构
 typedef struct FreePage {
-    struct FreePage* next;  // 指向下一个空闲页
+    struct FreePage* next;
 } FreePage;
 
-static FreePage* free_page_list = NULL;  // 空闲页链表
-static SpinLock mem_lock;  // 用于保护空闲页链表的锁
+// 空闲页链表的头指针
+static FreePage* free_pages_list = NULL;
 
-// 初始化内存分配器
+// 自旋锁，防止并发问题
+static SpinLock mem_lock;
+
+extern char end[];  // 内核结束地址，空闲页从此地址之后开始
+
 void kinit() {
-    // 初始化引用计数器
-    init_rc(&kalloc_page_cnt);
+    init_rc(&kalloc_page_cnt);  // 初始化页面计数器
+    init_spinlock(&mem_lock);  // 初始化自旋锁
 
-    // 初始化内存锁
-    init_spinlock(&mem_lock);
-
-    // 获取内核结束地址（即可用内存的起始地址）
-    extern char end[];
-    u64 start = PAGE_BASE(P2K((u64)end));  // 内核结束地址对齐到页面边界
-    u64 end_addr = PHYSTOP;  // 可用物理内存的结束地址
-
-    // 将从 `end` 到 `PHYSTOP` 的物理内存按页加入到空闲页链表中
-    for (u64 addr = start; addr + PAGE_SIZE <= end_addr; addr += PAGE_SIZE) {
-        FreePage* page = (FreePage*)addr;
-        page->next = free_page_list;  // 插入到空闲页链表的头部
-        free_page_list = page;
+    // 初始化空闲页链表
+    char* page = (char*)end;
+    for (; page + PAGE_SIZE <= (char*)PHYSTOP; page += PAGE_SIZE) {
+        kfree_page(page);  // 将每个页面放入空闲链表中
     }
 }
 
-// 分配一个物理页
 void* kalloc_page() {
-    acquire_spin_lock(&mem_lock);  // 加锁，确保线程安全
+    acquire_spinlock(&mem_lock);  // 获取自旋锁，防止并发问题
 
-    // 如果没有可用的空闲页，返回 NULL
-    if (free_page_list == NULL) {
-        release_spin_lock(&mem_lock);
-        return NULL;
+    FreePage* page = free_pages_list;  // 从空闲链表取页
+    if (page) {
+        free_pages_list = page->next;  // 更新链表头
+        increment_rc(&kalloc_page_cnt);  // 更新分配页面计数
     }
 
-    // 从空闲链表中取出一个页
-    FreePage* page = free_page_list;
-    free_page_list = page->next;
-
-    // 更新引用计数
-    increment_rc(&kalloc_page_cnt);
-
-    release_spin_lock(&mem_lock);  // 解锁
-
-    // 返回分配的物理页地址
+    release_spinlock(&mem_lock);  // 释放自旋锁
     return (void*)page;
 }
 
-// 释放物理页
 void kfree_page(void* p) {
     if (p == NULL) {
-        return;  // 如果释放的指针为空，直接返回
+        return;
     }
 
-    acquire_spin_lock(&mem_lock);  // 加锁，确保线程安全
+    acquire_spinlock(&mem_lock);  // 获取自旋锁，防止并发问题
 
-    // 将物理页重新加入到空闲链表中
     FreePage* page = (FreePage*)p;
-    page->next = free_page_list;
-    free_page_list = page;
+    page->next = free_pages_list;  // 将页面重新插入空闲链表
+    free_pages_list = page;
 
-    // 更新引用计数
-    decrement_rc(&kalloc_page_cnt);
+    decrement_rc(&kalloc_page_cnt);  // 更新页面计数
 
-    release_spin_lock(&mem_lock);  // 解锁
+    release_spinlock(&mem_lock);  // 释放自旋锁
+}
+
+void* kalloc(unsigned long long size) {
+    // 简单实现：仅支持以 PAGE_SIZE 为单位的分配
+    if (size <= PAGE_SIZE) {
+        return kalloc_page();
+    }
+    return NULL;
+}
+
+void kfree(void* ptr) {
+    // 简单实现：仅支持以 PAGE_SIZE 为单位的释放
+    kfree_page(ptr);
 }
