@@ -112,23 +112,55 @@ void kfree_page(void* p) {
     release_spinlock(&mem_lock);  // 释放自旋锁
 }
 
+
 // void* kalloc(unsigned long long size) {
-//     // 简单实现：仅支持以 PAGE_SIZE 为单位的分配
-//     if (size <= PAGE_SIZE) {
-//         return kalloc_page();
-//     }
 //     return NULL;
 // }
 
 // void kfree(void* ptr) {
-//     // 简单实现：仅支持以 PAGE_SIZE 为单位的释放
-//     kfree_page(ptr);
+//     return;
 // }
-
 void* kalloc(unsigned long long size) {
-    return NULL;
+    printk("%lld ", size);
+    // 对 size 进行对齐，确保是 PAGE_SIZE 的倍数
+    unsigned long long aligned_size = ALIGN_UP(size, PAGE_SIZE);
+    unsigned long long num_pages = aligned_size / PAGE_SIZE;
+
+    // 分配物理页，确保连续分配
+    FreePage* first_page = NULL;
+    FreePage* prev_page = NULL;
+
+    for (unsigned long long i = 0; i < num_pages; i++) {
+        FreePage* page = (FreePage*)kalloc_page();
+        if (!page) {
+            // 如果分配失败，释放已经分配的页
+            for (FreePage* p = first_page; p != NULL; p = prev_page) {
+                prev_page = (FreePage*)((char*)p + PAGE_SIZE);
+                kfree_page(p);
+            }
+            return NULL;
+        }
+        
+        if (!first_page) {
+            first_page = page;  // 记录第一个页面
+        }
+
+        prev_page = page;  // 记录上一个页面
+    }
+
+    return (void*)first_page;
 }
 
 void kfree(void* ptr) {
-    return;
+    if (!ptr) {
+        return;
+    }
+
+    // 根据大小释放内存块
+    FreePage* page = (FreePage*)ptr;
+    while (page) {
+        FreePage* next_page = (FreePage*)((char*)page + PAGE_SIZE);
+        kfree_page(page);
+        page = next_page;
+    }
 }
