@@ -146,6 +146,7 @@ void* kalloc(unsigned long long size) {
                 } else {
                     pool->free_list = block->next;
                 }
+                printk("kalloc: size=%llu, block=%p\n", size, block);
                 return (void*)(block + 1);  // 返回块之后的实际数据地址
             }
             prev_block = block;
