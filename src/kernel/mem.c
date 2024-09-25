@@ -13,6 +13,24 @@ typedef struct FreePage {
     ListNode node;  // 使用 ListNode 来管理空闲页
 } FreePage;
 
+
+//在每个分配的内存块中保存其大小，以便在释放时能够知道如何正确回收。
+typedef struct MemoryBlock {
+    unsigned long long size;  // 记录内存块的大小
+    struct MemoryBlock* next; // 指向下一个空闲块
+} MemoryBlock;
+
+//每个物理页会被视为内存池，池中包含多个 MemoryBlock。在池内进行分配和释放时，需要管理这些块。
+typedef struct MemoryPool {
+    MemoryBlock* free_list;  // 空闲块链表
+    struct MemoryPool* next; // 指向下一个内存池
+} MemoryPool;
+
+static MemoryPool* memory_pool_list = NULL;  // 管理所有的内存池
+
+
+
+
 // 空闲页链表的头指针
 static ListNode free_pages_list;
 
@@ -38,10 +56,6 @@ void print_list_from_tail() {
         node = node->prev;
     }
 }
-
-
-
-
 
 
 
@@ -113,42 +127,55 @@ void kfree_page(void* p) {
 }
 
 
-// void* kalloc(unsigned long long size) {
-//     return NULL;
-// }
-
-// void kfree(void* ptr) {
-//     return;
-// }
 void* kalloc(unsigned long long size) {
-    printk("%lld ", size);
-    // 对 size 进行对齐，确保是 PAGE_SIZE 的倍数
-    unsigned long long aligned_size = ALIGN_UP(size, PAGE_SIZE);
-    unsigned long long num_pages = aligned_size / PAGE_SIZE;
+    // 对齐大小，确保最小对齐到 8 字节
+    size = ALIGN_UP(size, 8);
 
-    // 分配物理页，确保连续分配
-    FreePage* first_page = NULL;
-    FreePage* prev_page = NULL;
+    // 遍历现有的内存池，寻找合适的块
+    MemoryPool* pool = memory_pool_list;
+    while (pool) {
+        MemoryBlock* prev_block = NULL;
+        MemoryBlock* block = pool->free_list;
 
-    for (unsigned long long i = 0; i < num_pages; i++) {
-        FreePage* page = (FreePage*)kalloc_page();
-        if (!page) {
-            // 如果分配失败，释放已经分配的页
-            for (FreePage* p = first_page; p != NULL; p = prev_page) {
-                prev_page = (FreePage*)((char*)p + PAGE_SIZE);
-                kfree_page(p);
+        // 遍历当前内存池的空闲列表
+        while (block) {
+            if (block->size >= size) {
+                // 找到合适的块，分配内存
+                if (prev_block) {
+                    prev_block->next = block->next;
+                } else {
+                    pool->free_list = block->next;
+                }
+                return (void*)(block + 1);  // 返回块之后的实际数据地址
             }
-            return NULL;
-        }
-        
-        if (!first_page) {
-            first_page = page;  // 记录第一个页面
+            prev_block = block;
+            block = block->next;
         }
 
-        prev_page = page;  // 记录上一个页面
+        pool = pool->next;
     }
 
-    return (void*)first_page;
+    // 如果没有找到合适的块，分配新的页作为内存池
+    void* page = kalloc_page();
+    if (!page) {
+        return NULL;  // 分配失败
+    }
+
+    // 初始化新的内存池
+    pool = (MemoryPool*)page;
+    pool->next = memory_pool_list;
+    memory_pool_list = pool;
+
+    // 初始化物理页内的内存块
+    MemoryBlock* block = (MemoryBlock*)(pool + 1);  // 跳过 MemoryPool 结构
+    block->size = PAGE_SIZE - sizeof(MemoryPool);   // 剩余内存的大小
+    block->next = NULL;
+
+    // 将新分配的块插入空闲列表
+    pool->free_list = block;
+
+    // 递归调用 kalloc 再次分配内存
+    return kalloc(size);
 }
 
 void kfree(void* ptr) {
@@ -156,11 +183,25 @@ void kfree(void* ptr) {
         return;
     }
 
-    // 根据大小释放内存块
-    FreePage* page = (FreePage*)ptr;
-    while (page) {
-        FreePage* next_page = (FreePage*)((char*)page + PAGE_SIZE);
-        kfree_page(page);
-        page = next_page;
+    // 获取指向 MemoryBlock 的指针
+    MemoryBlock* block = (MemoryBlock*)ptr - 1;
+
+    // 遍历内存池，找到该块所属的内存池
+    MemoryPool* pool = memory_pool_list;
+    while (pool) {
+        char* pool_start = (char*)pool;
+        char* pool_end = pool_start + PAGE_SIZE;
+
+        if ((char*)block >= pool_start && (char*)block < pool_end) {
+            // 将块插入到该池的空闲列表中
+            block->next = pool->free_list;
+            pool->free_list = block;
+            return;
+        }
+
+        pool = pool->next;
     }
+
+    // 如果没有找到所属的池，说明释放有误
+    printk("kfree: invalid pointer %p\n", ptr);
 }
