@@ -127,6 +127,59 @@ void kfree_page(void* p) {
 }
 
 
+// void* kalloc(unsigned long long size) {
+//     // 对齐大小，确保最小对齐到 8 字节
+//     size = ALIGN_UP(size, 8);
+
+//     // 遍历现有的内存池，寻找合适的块
+//     MemoryPool* pool = memory_pool_list;
+//     while (pool) {
+//         MemoryBlock* prev_block = NULL;
+//         MemoryBlock* block = pool->free_list;
+
+//         // 遍历当前内存池的空闲列表
+//         while (block) {
+//             if (block->size >= size) {
+//                 // 找到合适的块，分配内存
+//                 if (prev_block) {
+//                     prev_block->next = block->next;
+//                 } else {
+//                     pool->free_list = block->next;
+//                 }
+//                 printk("kalloc: size=%llu, block=%p\n", size, block);
+//                 return (void*)(block + 1);  // 返回块之后的实际数据地址
+//             }
+//             prev_block = block;
+//             block = block->next;
+//         }
+
+//         pool = pool->next;
+//     }
+
+//     // 如果没有找到合适的块，分配新的页作为内存池
+//     void* page = kalloc_page();
+//     if (!page) {
+//         return NULL;  // 分配失败
+//     }
+
+//     // 初始化新的内存池
+//     pool = (MemoryPool*)page;
+//     pool->next = memory_pool_list;
+//     memory_pool_list = pool;
+
+//     // 初始化物理页内的内存块
+//     MemoryBlock* block = (MemoryBlock*)(pool + 1);  // 跳过 MemoryPool 结构
+//     block->size = PAGE_SIZE - sizeof(MemoryPool);   // 剩余内存的大小
+//     block->next = NULL;
+
+//     // 将新分配的块插入空闲列表
+//     pool->free_list = block;
+
+//     // 递归调用 kalloc 再次分配内存
+//     return kalloc(size);
+// }
+
+//切分版本
 void* kalloc(unsigned long long size) {
     // 对齐大小，确保最小对齐到 8 字节
     size = ALIGN_UP(size, 8);
@@ -141,10 +194,26 @@ void* kalloc(unsigned long long size) {
         while (block) {
             if (block->size >= size) {
                 // 找到合适的块，分配内存
-                if (prev_block) {
-                    prev_block->next = block->next;
+                if (block->size > size + sizeof(MemoryBlock)) {
+                    // 如果块比需要的内存大得多，切分块
+                    MemoryBlock* new_block = (MemoryBlock*)((char*)(block + 1) + size);
+                    new_block->size = block->size - size - sizeof(MemoryBlock);
+                    new_block->next = block->next;
+
+                    // 更新当前块的大小和空闲列表
+                    block->size = size;
+                    if (prev_block) {
+                        prev_block->next = new_block;
+                    } else {
+                        pool->free_list = new_block;
+                    }
                 } else {
-                    pool->free_list = block->next;
+                    // 否则直接分配整个块
+                    if (prev_block) {
+                        prev_block->next = block->next;
+                    } else {
+                        pool->free_list = block->next;
+                    }
                 }
                 printk("kalloc: size=%llu, block=%p\n", size, block);
                 return (void*)(block + 1);  // 返回块之后的实际数据地址
@@ -178,6 +247,9 @@ void* kalloc(unsigned long long size) {
     // 递归调用 kalloc 再次分配内存
     return kalloc(size);
 }
+
+
+
 
 void kfree(void* ptr) {
     if (!ptr) {
