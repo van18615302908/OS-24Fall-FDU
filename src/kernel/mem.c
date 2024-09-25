@@ -42,21 +42,6 @@ extern char end[];  // 内核结束地址，空闲页从此地址之后开始
 
 
 
-// 从链表尾部开始打印
-void print_list_from_tail() {
-    // 获取链表的尾节点
-    ListNode* node = free_pages_list.prev;
-    
-    printk("Printing free pages from tail:\n");
-    
-    // 从尾节点开始，向前遍历，直到链表头部
-    for (int i = 0; i < 10 && node != &free_pages_list; i++) {
-        FreePage* page = (FreePage*)node;
-        printk("Page at address: %p\n", page);
-        node = node->prev;
-    }
-}
-
 
 
 
@@ -73,9 +58,10 @@ void kinit() {
     // 初始化空闲页链表
     // char* page = (char*)end;
     char* page = (char*)ALIGN_UP((unsigned long)end, PAGE_SIZE);// 从 end 开始，向上对齐到 PAGE_SIZE
-    printk("kinit: end=%p, page=%p\n", end, page);
+
+    // printk("kinit: end=%p, page=%p\n", end, page);
+
     for (; page + PAGE_SIZE <= phystop_vaddr; page += PAGE_SIZE) {
-        // printk("kinit: page=%p\n", page);
         kfree_page(page);  // 将每个页面放入空闲链表中
     }
 
@@ -86,22 +72,22 @@ void* kalloc_page() {
 
     if (free_pages_list.next == &free_pages_list) {
         // 空闲链表为空，无法分配页面
-        printk("kalloc_page: no free pages\n");
+        // printk("kalloc_page: no free pages\n");
         release_spinlock(&mem_lock);
         return NULL;
     }
 
-    // print_list_from_tail();  // 打印空闲页链表
+
 
     // 打印当前和接下来的十个next元素
     if (1)
     {
         ListNode* current = free_pages_list.next;
-        printk("kalloc_page_distribution: free_pages_list.next=%p\n", current);
+        // printk("kalloc_page_distribution: free_pages_list.next=%p\n", current);
 
         for (int i = 0; i < 10 && current != &free_pages_list; i++) {
             current = current->next;
-            printk("Next element %d: %p %p\n", i + 1, current, &current);
+            // printk("Next element %d: %p %p\n", i + 1, current, &current);
         }
     }
     
@@ -111,11 +97,11 @@ void* kalloc_page() {
 
     FreePage* page = (FreePage*)node;  // 将移除的节点转换为 FreePage 类型
     
-    printk("kalloc_page: page=%p\n", page);
+    // printk("kalloc_page: page=%p\n", page);
     // 检查页面地址是否对齐
     if ((u64)page & (PAGE_SIZE - 1)) {
         release_spinlock(&mem_lock);
-        printk("kalloc_page:返回未对齐的页面地址 %p\n", page);
+        // printk("kalloc_page:返回未对齐的页面地址 %p\n", page);
         return NULL;
     }
 
@@ -135,7 +121,7 @@ void kfree_page(void* p) {
     // 将释放的页面重新插入到空闲链表中
     FreePage* page = (FreePage*)p;
     _insert_into_list(&free_pages_list, &page->node);
-    // printk("kfree_page: page=%p\n", page);
+
 
     decrement_rc(&kalloc_page_cnt);  // 更新页面计数
 
@@ -147,33 +133,27 @@ void kfree_page(void* p) {
 //切分版本
 void* kalloc(unsigned long long size) {
     size += sizeof(MemoryBlock);  // 加上 MemoryBlock 的大小
-    printk("！！！！！！！！kalloc: size=%llu\n", size);
+    // printk("！！！！！！！！!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!kalloc: size=%llu\n", size);
     // 对齐大小，确保最小对齐到 8 字节
     size = ALIGN_UP(size, 8);
 
     // 遍历现有的内存池，寻找合适的块
     MemoryPool* pool = memory_pool_list;
     while (pool) {
+        // printk("\n kalloc: size=%llu， page = %p \n", size,(void*)pool);
         MemoryBlock* prev_block = NULL;
         MemoryBlock* block = pool->free_list;
-        if(size == 264){
-            if(block){
-                printk("kalloc_debug: size=%llu, block_size=%llu\n", size, block->size);
-            }
-            else{
-                printk("kalloc_debug: size=%llu, block_size=NULL\n", size);
-            }
-        }
+
 
         // 遍历当前内存池的空闲列表
         while (block) {
-            printk("kalloc: size=%llu, block=%p,block_size=%llu， page = %p\n", size, block,block->size,(void*)pool);
+            // printk("kalloc: size=%llu, block=%p,block_size=%llu\n", size, block,block->size);
             if (block->size >= size && block->size >= 32) {
                 // 找到合适的块，分配内存
                 //只有当块比需要的内存大得多时才切分块
                 if ( block->size  > 16 + size) {
                     // 如果块比需要的内存大得多，切分块
-                    MemoryBlock* new_block = (MemoryBlock*)((char*)(block + 1) + size);
+                    MemoryBlock* new_block = (MemoryBlock*)((char*)(block ) + size);
                     new_block->size = block->size - size - sizeof(MemoryBlock);
                     new_block->next = block->next;
 
@@ -192,7 +172,7 @@ void* kalloc(unsigned long long size) {
                         pool->free_list = block->next;
                     }
                 }
-                printk("kalloc: 成功\n");
+                // printk("kalloc: 成功\n");
                 return (void*)(block + 1);  // 返回块之后的实际数据地址
             }
             prev_block = block;
@@ -200,15 +180,16 @@ void* kalloc(unsigned long long size) {
         }
 
         pool = pool->next;
-        printk("next page\n");
+        // printk("next page\n");
     }
-    printk("没能找到合适的块，分配新的页作为内存池\n");
-    printk("kalloc_page()启动\n");
+    // printk("没能找到合适的块，分配新的页作为内存池\n");
+    // printk("kalloc_page()启动\n");
     // 如果没有找到合适的块，分配新的页作为内存池
     void* page = kalloc_page();
+    // printk("kalloc_page()成功\n");
     
     if (!page) {
-        printk("kalloc: failed to allocate page\n");
+        // printk("kalloc: failed to allocate page\n");
         return NULL;  // 分配失败
     }
 
@@ -226,7 +207,7 @@ void* kalloc(unsigned long long size) {
     pool->free_list = block;
 
     // 递归调用 kalloc 再次分配内存
-    printk("kalloc: 递归调用\n");
+    // printk("kalloc: 递归调用\n");
     return kalloc(size);
 }
 

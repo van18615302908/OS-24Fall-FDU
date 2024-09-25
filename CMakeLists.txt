@@ -29,7 +29,7 @@ get_property(sd_image GLOBAL PROPERTY sd_image_path)
 set(qemu_flags
     -machine virt,gic-version=3
     -cpu cortex-a72
-    -smp 4
+    -smp 1
     -m 4096
     -nographic
     -monitor none
