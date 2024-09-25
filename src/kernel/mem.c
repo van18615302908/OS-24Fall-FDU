@@ -94,19 +94,21 @@ void* kalloc_page() {
     // print_list_from_tail();  // 打印空闲页链表
 
     // 打印当前和接下来的十个next元素
-    ListNode* current = free_pages_list.next;
-    printk("kalloc_page_distribution: free_pages_list.next=%p\n", current);
+    if (1)
+    {
+        ListNode* current = free_pages_list.next;
+        printk("kalloc_page_distribution: free_pages_list.next=%p\n", current);
 
-    for (int i = 0; i < 10 && current != &free_pages_list; i++) {
-        current = current->next;
-        printk("Next element %d: %p %p\n", i + 1, current, &current);
+        for (int i = 0; i < 10 && current != &free_pages_list; i++) {
+            current = current->next;
+            printk("Next element %d: %p %p\n", i + 1, current, &current);
+        }
     }
+    
+
 
     ListNode* node = _detach_from_list(free_pages_list.next);  // 先移除节点
 
-    
-
-    printk("链表元素移除成功\n");
     FreePage* page = (FreePage*)node;  // 将移除的节点转换为 FreePage 类型
     
     printk("kalloc_page: page=%p\n", page);
@@ -224,6 +226,7 @@ void* kalloc(unsigned long long size) {
     pool->free_list = block;
 
     // 递归调用 kalloc 再次分配内存
+    printk("kalloc: 递归调用\n");
     return kalloc(size);
 }
 
