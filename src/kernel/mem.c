@@ -62,7 +62,6 @@ void kinit() {
 
 
     // 初始化空闲页链表
-    // char* page = (char*)end;
     char* page = (char*)ALIGN_UP((unsigned long)end, PAGE_SIZE);// 从 end 开始，向上对齐到 PAGE_SIZE
 
     // printk("kinit: end=%p, page=%p\n", end, page);
@@ -86,20 +85,6 @@ void* kalloc_page() {
         release_spinlock(&mem_lock);
         return NULL;
     }
-
-
-
-    // // 打印当前和接下来的十个next元素
-    // if (debug)
-    // {
-    //     ListNode* current = free_pages_list.next;
-    //     printk("kalloc_page_distribution: free_pages_list.next=%p\n", current);
-
-    //     for (int i = 0; i < 10 && current != &free_pages_list; i++) {
-    //         current = current->next;
-    //         printk("Next element %d: %p %p\n", i + 1, current, &current);
-    //     }
-    // }
 
 
     ListNode* node = _detach_from_list(free_pages_list.next);  // 先移除节点
@@ -154,8 +139,6 @@ void kfree_page(void* p) {
     }
 }
 
-
-
 //切分版本
 void* kalloc(unsigned long long size) {
     // printk("kalloc: size=%llu\n", size);
@@ -170,10 +153,10 @@ void* kalloc(unsigned long long size) {
         printk("kalloc: work start!!! on CPU %lld\n", cpuid());
     }
 
-    // size += sizeof(MemoryBlock);  // 加上 MemoryBlock 的大小
+    //为了对齐，不可以是4
     size += 8;
 
-    // printk("！！！！！！！！!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!kalloc: size=%llu\n", size);
+
     // 对齐大小，确保最小对齐到 8 字节
     size = ALIGN_UP(size, 8);
 
@@ -235,9 +218,7 @@ void* kalloc(unsigned long long size) {
         pool = pool->next;
         // printk("next page\n");
     }
-    // printk("没能找到合适的块，分配新的页作为内存池\n");
-    // printk("kalloc_page()启动\n");
-    // 如果没有找到合适的块，分配新的页作为内存池
+
     if(debug){
         printk("kalloc_page()启动 调用CPU:%lld\n", cpuid());
     }
@@ -270,9 +251,7 @@ void* kalloc(unsigned long long size) {
 
 }
 
-// void kfree(void* ptr) {
-//     return;
-// }
+
 
 
 void kfree(void* ptr) {
@@ -292,6 +271,7 @@ void kfree(void* ptr) {
     // MemoryBlock* block = (MemoryBlock*)ptr - 1;
     MemoryBlock* block = (MemoryBlock*)((char*)ptr - 8);
 
+
     // 遍历内存池，找到该块所属的内存池
     MemoryPool* pool = memory_pool_list;
     while (pool) {
@@ -310,9 +290,9 @@ void kfree(void* ptr) {
             }
 
             // 尝试与前一个空闲块合并
-            if (prev && (char*)prev + prev->size + sizeof(MemoryBlock) == (char*)block) {
+            if (prev && (char*)prev + prev->size  == (char*)block) {
                 // 可以与前一个块合并
-                prev->size += block->size + sizeof(MemoryBlock);
+                prev->size += block->size ;
                 block = prev;
             } else {
                 // 不能合并，将块插入到当前位置
@@ -325,9 +305,9 @@ void kfree(void* ptr) {
             }
 
             // 尝试与后一个空闲块合并
-            if (curr && (char*)block + block->size + sizeof(MemoryBlock) == (char*)curr) {
+            if (curr && (char*)block + block->size  == (char*)curr) {
                 // 可以与后一个块合并
-                block->size += curr->size + sizeof(MemoryBlock);
+                block->size += curr->size ;
                 block->next = curr->next;
             }
 
