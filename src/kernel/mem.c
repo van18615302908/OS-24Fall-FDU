@@ -176,18 +176,18 @@ void* kalloc(unsigned long long size) {
     start_inner_loop:
     while (pool) {
 
-        // char* pool_end = (char*)pool + PAGE_SIZE;
-        
+        char* pool_end = (char*)pool + PAGE_SIZE;
+
         // printk("\n kalloc: size=%llu， page = %p \n", size,(void*)pool);
         MemoryBlock* prev_block = NULL;
         MemoryBlock* block = pool->free_list;
 
 
         // 遍历当前内存池的空闲列表
-        while (block) {
+        while (block && (char*)block < pool_end) {
 
-            // int block_size = block->next ? (char*)block->next - (char*)block : pool_end - (char*)block;
-            // printk("kalloc: size=%llu, block=%p,block_size=%u %u\n", size, block,block->size,block_size);
+            int block_size = block->next ? (char*)block->next - (char*)block : pool_end - (char*)block;
+            printk("kalloc: size=%llu, block=%p,block_size=%u %u\n", size, block,block->size,block_size);
 
             if (block->size >= (int)size ) {
                 // 找到合适的块，分配内存
@@ -224,6 +224,7 @@ void* kalloc(unsigned long long size) {
                 // printk("kalloc: 成功\n");
                 return (void*)(block + 1);  // 返回块之后的实际数据地址
             }
+            //如果没有返回，继续查找下一个块
             prev_block = block;
             block = block->next;
         }
@@ -255,7 +256,8 @@ void* kalloc(unsigned long long size) {
     // 初始化物理页内的内存块
     MemoryBlock* block = (MemoryBlock*)(pool + 1);  // 跳过 MemoryPool 结构
     block->size = PAGE_SIZE - sizeof(MemoryPool);   // 剩余内存的大小
-    block->next = NULL;
+    MemoryBlock* page_block_end = (MemoryBlock*)((char*)pool + PAGE_SIZE );
+    block->next = page_block_end;
 
     // 将新分配的块插入空闲列表
     pool->free_list = block;
