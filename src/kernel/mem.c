@@ -172,6 +172,8 @@ void* kalloc(unsigned long long size) {
 
     // 遍历现有的内存池，寻找合适的块
     MemoryPool* pool = memory_pool_list;
+
+    start_inner_loop:
     while (pool) {
         // printk("\n kalloc: size=%llu， page = %p \n", size,(void*)pool);
         MemoryBlock* prev_block = NULL;
@@ -181,10 +183,10 @@ void* kalloc(unsigned long long size) {
         // 遍历当前内存池的空闲列表
         while (block) {
             // printk("kalloc: size=%llu, block=%p,block_size=%llu\n", size, block,block->size);
-            if (block->size >= size && block->size >= 32) {
+            if (block->size >= (int)size ) {
                 // 找到合适的块，分配内存
                 //只有当块比需要的内存大得多时才切分块
-                if ( block->size  > 16 + size) {
+                if ( block->size  > 16 + (int)size) {
                     // 如果块比需要的内存大得多，切分块
                     MemoryBlock* new_block = (MemoryBlock*)((char*)(block ) + size);
                     new_block->size = block->size - size - sizeof(MemoryBlock);
@@ -251,57 +253,8 @@ void* kalloc(unsigned long long size) {
     // 将新分配的块插入空闲列表
     pool->free_list = block;
 
+    goto start_inner_loop;
 
-    while (pool) {
-        // printk("\n kalloc: size=%llu， page = %p \n", size,(void*)pool);
-        MemoryBlock* prev_block = NULL;
-        MemoryBlock* block = pool->free_list;
-
-
-        // 遍历当前内存池的空闲列表
-        while (block) {
-            // printk("kalloc: size=%llu, block=%p,block_size=%llu\n", size, block,block->size);
-            if (block->size >= size && block->size >= 32) {
-                // 找到合适的块，分配内存
-                //只有当块比需要的内存大得多时才切分块
-                if ( block->size  > 16 + size) {
-                    // 如果块比需要的内存大得多，切分块
-                    MemoryBlock* new_block = (MemoryBlock*)((char*)(block ) + size);
-                    new_block->size = block->size - size - sizeof(MemoryBlock);
-                    new_block->next = block->next;
-
-                    // 更新当前块的大小和空闲列表
-                    block->size = size;
-                    if (prev_block) {
-                        prev_block->next = new_block;
-                    } else {
-                        pool->free_list = new_block;
-                    }
-                } else {
-                    // 否则直接分配整个块
-                    if (prev_block) {
-                        prev_block->next = block->next;
-                    } else {
-                        pool->free_list = block->next;
-                    }
-                }
-
-                // 释放自旋锁
-                release_spinlock(&mem_lock_block);
-                if(debug){
-                    printk("kalloc: mem_lock_block released on CPU %lld\n", cpuid());
-                }
-
-                // printk("kalloc: 成功\n");
-                return (void*)(block + 1);  // 返回块之后的实际数据地址
-            }
-            prev_block = block;
-            block = block->next;
-        }
-
-        pool = pool->next;
-
-    }
     return NULL;
 
 }
