@@ -21,7 +21,7 @@ typedef struct FreePage {
 
 //在每个分配的内存块中保存其大小，以便在释放时能够知道如何正确回收。
 typedef struct MemoryBlock {
-    int size;  // 记录内存块的大小
+    unsigned int size;  // 记录内存块的大小
     struct MemoryBlock* next; // 指向下一个空闲块
 } MemoryBlock;
 
@@ -172,28 +172,33 @@ void* kalloc(unsigned long long size) {
 
     // 遍历现有的内存池，寻找合适的块
     MemoryPool* pool = memory_pool_list;
-
+    
     start_inner_loop:
     while (pool) {
         // printk("\n kalloc: size=%llu， page = %p \n", size,(void*)pool);
         MemoryBlock* prev_block = NULL;
         MemoryBlock* block = pool->free_list;
-
+        char* pool_end = (char*)pool + PAGE_SIZE;
 
         // 遍历当前内存池的空闲列表
         while (block) {
-            // printk("kalloc: size=%llu, block=%p,block_size=%llu\n", size, block,block->size);
-            if (block->size >= (int)size ) {
+            int block_size = block->next ? (char*)block->next - (char*)block : pool_end - (char*)block;
+            printk("kalloc: size=%llu, block=%p,block_size= %u %u\n", size, block,block->size,block_size);
+            if (block_size >= (int)size ) {
                 // 找到合适的块，分配内存
                 //只有当块比需要的内存大得多时才切分块
-                if ( block->size  > 16 + (int)size) {
+                if ( block_size  > 16 + (int)size) {
                     // 如果块比需要的内存大得多，切分块
                     MemoryBlock* new_block = (MemoryBlock*)((char*)(block ) + size);
-                    new_block->size = block->size - size - sizeof(MemoryBlock);
+
+                    new_block->size = block->size - size - sizeof(MemoryBlock);//todo
+
                     new_block->next = block->next;
 
-                    // 更新当前块的大小和空闲列表
-                    block->size = size;
+                    // // 更新当前块的大小和空闲列表
+
+                    block->size = size;//todo
+
                     if (prev_block) {
                         prev_block->next = new_block;
                     } else {
