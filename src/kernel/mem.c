@@ -25,16 +25,9 @@ typedef struct MemoryBlock {
     struct MemoryBlock* next; // 指向下一个空闲块
 } MemoryBlock;
 
-//每一页里面有一个链表形式的内存块，每个内存块都有一个头部，用于记录内存块的大小和是否空闲。
-typedef struct memory_block_link {
-    struct memory_block_link* next;
-    struct memory_block_link* prev;
+typedef struct MemoryBlock_destri{
     int size;
-    struct MemoryBlock* store;//当前这个链表节点对应的内存块
-    void* data;
-} memory_block_link;
-
-
+}MemoryBlock_destri;
 
 //每个物理页会被视为内存池，池中包含多个 MemoryBlock。在池内进行分配和释放时，需要管理这些块。
 typedef struct MemoryPool {
@@ -44,7 +37,7 @@ typedef struct MemoryPool {
 
 static MemoryPool* memory_pool_list = NULL;  // 管理所有的内存池
 
-// struct 
+
 
 
 // 空闲页链表的头指针
@@ -165,6 +158,7 @@ void kfree_page(void* p) {
 
 //切分版本
 void* kalloc(unsigned long long size) {
+    // printk("kalloc: size=%llu\n", size);
     debug = 0;
     // 获取自旋锁，防止并发问题
     if(debug){
@@ -176,7 +170,9 @@ void* kalloc(unsigned long long size) {
         printk("kalloc: work start!!! on CPU %lld\n", cpuid());
     }
 
-    size += sizeof(MemoryBlock);  // 加上 MemoryBlock 的大小
+    // size += sizeof(MemoryBlock);  // 加上 MemoryBlock 的大小
+    size += 8;
+
     // printk("！！！！！！！！!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!kalloc: size=%llu\n", size);
     // 对齐大小，确保最小对齐到 8 字节
     size = ALIGN_UP(size, 8);
@@ -186,36 +182,29 @@ void* kalloc(unsigned long long size) {
 
     start_inner_loop:
     while (pool) {
-
-        char* pool_end = (char*)pool + PAGE_SIZE;
-
         // printk("\n kalloc: size=%llu， page = %p \n", size,(void*)pool);
         MemoryBlock* prev_block = NULL;
         MemoryBlock* block = pool->free_list;
 
 
         // 遍历当前内存池的空闲列表
-        while (block && (char*)block < pool_end) {
-
-            // int block_size = block->next ? (char*)block->next - (char*)block : pool_end - (char*)block;
-            // printk("kalloc: size=%llu, block=%p,block_size=%u %u\n", size, block,block->size,block_size);
-
+        while (block) {
+            // printk("kalloc: size=%llu, block=%p,block_size=%u\n", size, block,block->size);
             if (block->size >= (int)size ) {
                 // 找到合适的块，分配内存
                 //只有当块比需要的内存大得多时才切分块
                 if ( block->size  > 8 + (int)size) {
                     // 如果块比需要的内存大得多，切分块
-                    //new_block是新的块，它是原始块被分配后剩余的部分
-                    MemoryBlock* new_block = (MemoryBlock*)((char*)(block ) + size);
-                    new_block->size = block->size - size ;
+                    MemoryBlock* new_block = (MemoryBlock*)((char*)(block) + size);
+
+                    new_block->size = block->size - size;
 
                     new_block->next = block->next;
 
                     // 更新当前块的大小和空闲列表
                     block->size = size;
                     if (prev_block) {
-                        // prev_block->next = new_block; //todo
-                        prev_block->size = new_block;
+                        prev_block->next = new_block;
                     } else {
                         pool->free_list = new_block;
                     }
@@ -235,9 +224,10 @@ void* kalloc(unsigned long long size) {
                 }
 
                 // printk("kalloc: 成功\n");
-                return (void*)(block + 1);  // 返回块之后的实际数据地址
+                MemoryBlock_destri* block_destri = (MemoryBlock_destri*)block;
+                // printk("kalloc: 成功，返回地址=%p 大小= %u \n", (void*)(block_destri + 1), block_destri->size);
+                return (void*)(block_destri + 2);  // 返回块之后的实际数据地址
             }
-            //如果没有返回，继续查找下一个块
             prev_block = block;
             block = block->next;
         }
@@ -269,8 +259,7 @@ void* kalloc(unsigned long long size) {
     // 初始化物理页内的内存块
     MemoryBlock* block = (MemoryBlock*)(pool + 1);  // 跳过 MemoryPool 结构
     block->size = PAGE_SIZE - sizeof(MemoryPool);   // 剩余内存的大小
-    MemoryBlock* page_block_end = (MemoryBlock*)((char*)pool + PAGE_SIZE );
-    block->next = page_block_end;
+    block->next = NULL;
 
     // 将新分配的块插入空闲列表
     pool->free_list = block;
@@ -281,6 +270,9 @@ void* kalloc(unsigned long long size) {
 
 }
 
+// void kfree(void* ptr) {
+//     return;
+// }
 
 
 void kfree(void* ptr) {
@@ -297,7 +289,8 @@ void kfree(void* ptr) {
     }
 
     // 获取指向 MemoryBlock 的指针
-    MemoryBlock* block = (MemoryBlock*)ptr - 1;
+    // MemoryBlock* block = (MemoryBlock*)ptr - 1;
+    MemoryBlock* block = (MemoryBlock*)((char*)ptr - 8);
 
     // 遍历内存池，找到该块所属的内存池
     MemoryPool* pool = memory_pool_list;
