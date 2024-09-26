@@ -36,12 +36,9 @@ static ListNode free_pages_list;
 
 // 自旋锁，防止并发问题
 static SpinLock mem_lock;
+static SpinLock mem_lock_block;
 
 extern char end[];  // 内核结束地址，空闲页从此地址之后开始
-
-
-
-
 
 
 
@@ -79,18 +76,17 @@ void* kalloc_page() {
 
 
 
-    // 打印当前和接下来的十个next元素
-    if (1)
-    {
-        ListNode* current = free_pages_list.next;
-        // printk("kalloc_page_distribution: free_pages_list.next=%p\n", current);
+    // // 打印当前和接下来的十个next元素
+    // if (1)
+    // {
+    //     ListNode* current = free_pages_list.next;
+    //     printk("kalloc_page_distribution: free_pages_list.next=%p\n", current);
 
-        for (int i = 0; i < 10 && current != &free_pages_list; i++) {
-            current = current->next;
-            // printk("Next element %d: %p %p\n", i + 1, current, &current);
-        }
-    }
-    
+    //     for (int i = 0; i < 10 && current != &free_pages_list; i++) {
+    //         current = current->next;
+    //         printk("Next element %d: %p %p\n", i + 1, current, &current);
+    //     }
+    // }
 
 
     ListNode* node = _detach_from_list(free_pages_list.next);  // 先移除节点
@@ -132,6 +128,9 @@ void kfree_page(void* p) {
 
 //切分版本
 void* kalloc(unsigned long long size) {
+    // 获取自旋锁，防止并发问题
+    acquire_spinlock(&mem_lock_block);
+
     size += sizeof(MemoryBlock);  // 加上 MemoryBlock 的大小
     // printk("！！！！！！！！!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!kalloc: size=%llu\n", size);
     // 对齐大小，确保最小对齐到 8 字节
@@ -172,6 +171,9 @@ void* kalloc(unsigned long long size) {
                         pool->free_list = block->next;
                     }
                 }
+
+                // 释放自旋锁
+                release_spinlock(&mem_lock_block);
                 // printk("kalloc: 成功\n");
                 return (void*)(block + 1);  // 返回块之后的实际数据地址
             }
@@ -186,7 +188,7 @@ void* kalloc(unsigned long long size) {
     // printk("kalloc_page()启动\n");
     // 如果没有找到合适的块，分配新的页作为内存池
     void* page = kalloc_page();
-    // printk("kalloc_page()成功\n");
+    printk("kalloc_page()成功\n");
     
     if (!page) {
         // printk("kalloc: failed to allocate page\n");
@@ -206,6 +208,10 @@ void* kalloc(unsigned long long size) {
     // 将新分配的块插入空闲列表
     pool->free_list = block;
 
+    // 释放自旋锁
+    release_spinlock(&mem_lock);
+
+
     // 递归调用 kalloc 再次分配内存
     // printk("kalloc: 递归调用\n");
     return kalloc(size);
@@ -214,9 +220,14 @@ void* kalloc(unsigned long long size) {
 
 
 void kfree(void* ptr) {
+
     if (!ptr) {
+        // 释放空指针，直接返回
         return;
     }
+
+    // 获取自旋锁，防止并发问题
+    acquire_spinlock(&mem_lock_block);
 
     // 获取指向 MemoryBlock 的指针
     MemoryBlock* block = (MemoryBlock*)ptr - 1;
@@ -260,12 +271,16 @@ void kfree(void* ptr) {
                 block->next = curr->next;
             }
 
+            // 释放自旋锁
+            release_spinlock(&mem_lock_block);
             return;
         }
 
         pool = pool->next;
     }
 
+    // 释放自旋锁
+    release_spinlock(&mem_lock_block);
     // 如果没有找到所属的池，说明释放有误
     printk("kfree: invalid pointer %p\n", ptr);
 }

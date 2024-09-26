@@ -8,7 +8,7 @@
 
 extern RefCount kalloc_page_cnt;
 
-// static RefCount x;
+static RefCount x;
 static void *p[4][10000];
 static short sz[4][10000];
 
@@ -29,9 +29,7 @@ void kalloc_test() {
     int y = 10000 - i * 500;
     if (i == 0)
         printk("\n\nkalloc_test\n");
-    else 
-        return;
-    // SYNC(1)
+    SYNC(1)
     for (int j = 0; j < y; j++) {
         p[i][j] = kalloc_page();
         if (!p[i][j] || ((u64)p[i][j] & 4095))
@@ -45,10 +43,10 @@ void kalloc_test() {
                 FAIL("FAIL: page[%d][%d] wrong\n", i, j);
         kfree_page(p[i][j]);
     }
-    // SYNC(2)
+    SYNC(2)
     if (kalloc_page_cnt.count != r)
         FAIL("FAIL: kalloc_page_cnt %d -> %lld\n", r, kalloc_page_cnt.count);
-    // SYNC(3)
+    SYNC(3)
     for (int j = 0; j < 10000;) {
         if (j < 1000 || rand() > RAND_MAX / 16 * 7) {
             int z = 0;
@@ -90,7 +88,7 @@ void kalloc_test() {
             sz[i][k] = sz[i][j];
         }
     }
-    // SYNC(4)
+    SYNC(4)
     if (cpuid() == 0) {
         i64 z = 0;
         for (int j = 0; j < 4; j++)
@@ -98,10 +96,10 @@ void kalloc_test() {
                 z += sz[j][k];
         printk("Total: %lld\nUsage: %lld\n", z, kalloc_page_cnt.count - r);
     }
-    // SYNC(5)
+    SYNC(5)
     for (int j = 0; j < 10000; j++)
         kfree(p[i][j]);
-    // SYNC(6)
+    SYNC(6)
     if (cpuid() == 0)
         printk("kalloc_test PASS\n");
 }
