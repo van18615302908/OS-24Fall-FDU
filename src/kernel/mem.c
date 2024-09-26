@@ -64,7 +64,6 @@ void kinit() {
     // 初始化空闲页链表
     char* page = (char*)ALIGN_UP((unsigned long)end, PAGE_SIZE);// 从 end 开始，向上对齐到 PAGE_SIZE
 
-    // printk("kinit: end=%p, page=%p\n", end, page);
 
     for (; page + PAGE_SIZE <= phystop_vaddr; page += PAGE_SIZE) {
         kfree_page(page);  // 将每个页面放入空闲链表中
@@ -81,7 +80,6 @@ void* kalloc_page() {
 
     if (free_pages_list.next == &free_pages_list) {
         // 空闲链表为空，无法分配页面
-        // printk("kalloc_page: no free pages\n");
         release_spinlock(&mem_lock);
         return NULL;
     }
@@ -90,10 +88,6 @@ void* kalloc_page() {
     ListNode* node = _detach_from_list(free_pages_list.next);  // 先移除节点
 
     FreePage* page = (FreePage*)node;  // 将移除的节点转换为 FreePage 类型
-    
-    if(debug){
-        printk("kalloc_page: page=%p\n", page);
-    }
 
 
     // 检查页面地址是否对齐
@@ -106,9 +100,6 @@ void* kalloc_page() {
     increment_rc(&kalloc_page_cnt);  // 更新分配页面计数
 
     release_spinlock(&mem_lock);  // 释放自旋锁
-    if(debug){
-        printk("mem_lock released on CPU %lld\n", cpuid());
-    }
 
     return (void*)page;
 }
@@ -119,10 +110,6 @@ void kfree_page(void* p) {
     }
 
     acquire_spinlock(&mem_lock);  // 获取自旋锁，防止并发问题
-    if (debug)
-    {
-        printk("mem_lock acquired on CPU %lld\n", cpuid());
-    }
     
 
     // 将释放的页面重新插入到空闲链表中
@@ -133,25 +120,14 @@ void kfree_page(void* p) {
     decrement_rc(&kalloc_page_cnt);  // 更新页面计数
 
     release_spinlock(&mem_lock);  // 释放自旋锁
-    if (debug)
-    {
-        printk("mem_lock released on CPU %lld\n", cpuid());
-    }
 }
 
 //切分版本
 void* kalloc(unsigned long long size) {
-    // printk("kalloc: size=%llu\n", size);
+
     debug = 0;
     // 获取自旋锁，防止并发问题
-    if(debug){
-        printk("kalloc: mem_lock_block acquired on CPU %lld\n", cpuid());
-    }
     acquire_spinlock(&mem_lock_block);
-
-    if(debug){
-        printk("kalloc: work start!!! on CPU %lld\n", cpuid());
-    }
 
     //为了对齐，不可以是4
     size += 8;
@@ -165,16 +141,16 @@ void* kalloc(unsigned long long size) {
 
     start_inner_loop:
     while (pool) {
-        // printk("\n kalloc: size=%llu， page = %p \n", size,(void*)pool);
+
         MemoryBlock* prev_block = NULL;
         MemoryBlock* block = pool->free_list;
 
 
         // 遍历当前内存池的空闲列表
         while (block) {
-            // printk("kalloc: size=%llu, block=%p,block_size=%u\n", size, block,block->size);
+
             if (block->size >= (int)size ) {
-                // 找到合适的块，分配内存
+
                 //只有当块比需要的内存大得多时才切分块
                 if ( block->size  > 8 + (int)size) {
                     // 如果块比需要的内存大得多，切分块
@@ -202,13 +178,10 @@ void* kalloc(unsigned long long size) {
 
                 // 释放自旋锁
                 release_spinlock(&mem_lock_block);
-                if(debug){
-                    printk("kalloc: mem_lock_block released on CPU %lld\n", cpuid());
-                }
 
-                // printk("kalloc: 成功\n");
+
                 MemoryBlock_destri* block_destri = (MemoryBlock_destri*)block;
-                // printk("kalloc: 成功，返回地址=%p 大小= %u \n", (void*)(block_destri + 1), block_destri->size);
+
                 return (void*)(block_destri + 2);  // 返回块之后的实际数据地址
             }
             prev_block = block;
@@ -216,19 +189,12 @@ void* kalloc(unsigned long long size) {
         }
 
         pool = pool->next;
-        // printk("next page\n");
+
     }
 
-    if(debug){
-        printk("kalloc_page()启动 调用CPU:%lld\n", cpuid());
-    }
     void* page = kalloc_page();
-    if(debug){
-        printk("kalloc_page()结束 调用CPU:%lld\n", cpuid());
-    }
     
     if (!page) {
-        // printk("kalloc: failed to allocate page\n");
         return NULL;  // 分配失败
     }
 
@@ -263,12 +229,8 @@ void kfree(void* ptr) {
 
     // 获取自旋锁，防止并发问题
     acquire_spinlock(&mem_lock_block);
-    if(debug){
-        printk("kfree: mem_lock_block acquired on CPU %lld\n", cpuid());
-    }
 
     // 获取指向 MemoryBlock 的指针
-    // MemoryBlock* block = (MemoryBlock*)ptr - 1;
     MemoryBlock* block = (MemoryBlock*)((char*)ptr - 8);
 
 
@@ -324,9 +286,6 @@ void kfree(void* ptr) {
 
     // 释放自旋锁
     release_spinlock(&mem_lock_block);
-    if(debug){
-        printk("kfree: mem_lock_block released on CPU %lld\n", cpuid());
-    }
     // 如果没有找到所属的池，说明释放有误
     printk("kfree: invalid pointer %p\n", ptr);
 }
