@@ -25,6 +25,17 @@ typedef struct MemoryBlock {
     struct MemoryBlock* next; // 指向下一个空闲块
 } MemoryBlock;
 
+//每一页里面有一个链表形式的内存块，每个内存块都有一个头部，用于记录内存块的大小和是否空闲。
+typedef struct memory_block_link {
+    struct memory_block_link* next;
+    struct memory_block_link* prev;
+    int size;
+    struct MemoryBlock* store;//当前这个链表节点对应的内存块
+    void* data;
+} memory_block_link;
+
+
+
 //每个物理页会被视为内存池，池中包含多个 MemoryBlock。在池内进行分配和释放时，需要管理这些块。
 typedef struct MemoryPool {
     MemoryBlock* free_list;  // 空闲块链表
@@ -33,7 +44,7 @@ typedef struct MemoryPool {
 
 static MemoryPool* memory_pool_list = NULL;  // 管理所有的内存池
 
-
+// struct 
 
 
 // 空闲页链表的头指针
@@ -186,8 +197,8 @@ void* kalloc(unsigned long long size) {
         // 遍历当前内存池的空闲列表
         while (block && (char*)block < pool_end) {
 
-            int block_size = block->next ? (char*)block->next - (char*)block : pool_end - (char*)block;
-            printk("kalloc: size=%llu, block=%p,block_size=%u %u\n", size, block,block->size,block_size);
+            // int block_size = block->next ? (char*)block->next - (char*)block : pool_end - (char*)block;
+            // printk("kalloc: size=%llu, block=%p,block_size=%u %u\n", size, block,block->size,block_size);
 
             if (block->size >= (int)size ) {
                 // 找到合适的块，分配内存
@@ -197,12 +208,14 @@ void* kalloc(unsigned long long size) {
                     //new_block是新的块，它是原始块被分配后剩余的部分
                     MemoryBlock* new_block = (MemoryBlock*)((char*)(block ) + size);
                     new_block->size = block->size - size ;
+
                     new_block->next = block->next;
 
                     // 更新当前块的大小和空闲列表
                     block->size = size;
                     if (prev_block) {
-                        prev_block->next = new_block;
+                        // prev_block->next = new_block; //todo
+                        prev_block->size = new_block;
                     } else {
                         pool->free_list = new_block;
                     }
