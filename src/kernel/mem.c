@@ -152,7 +152,7 @@ void* kalloc(unsigned long long size) {
             if (block->size >= (int)size ) {
 
                 //只有当块比需要的内存大得多时才切分块
-                if ( block->size  > 8 + (int)size) {
+                if ( block->size  > 16 + (int)size) {
                     // 如果块比需要的内存大得多，切分块
                     MemoryBlock* new_block = (MemoryBlock*)((char*)(block) + size);
 
@@ -175,7 +175,6 @@ void* kalloc(unsigned long long size) {
                         pool->free_list = block->next;
                     }
                 }
-
                 // 释放自旋锁
                 release_spinlock(&mem_lock_block);
 
