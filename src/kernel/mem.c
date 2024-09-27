@@ -35,8 +35,29 @@ typedef struct MemoryPool {
     struct MemoryPool* next; // 指向下一个内存池
 } MemoryPool;
 
-static MemoryPool* memory_pool_list = NULL;  // 管理所有的内存池
+//储存用slab
+typedef struct slab
+{
+    struct slab* next; // 指向下一个内存块
+}slab;
 
+// //分配用slab
+// typedef struct slab_node{
+//     int size;
+// }slab_node;
+
+//储存slab的链表
+typedef struct slabs{
+    int size;
+    struct slabs* next;
+    struct slab* slab_node;
+}slabs;
+
+
+
+// static MemoryPool* memory_pool_list = NULL;  // 管理所有的内存池
+
+static slabs* slabs_list = NULL;
 
 
 
@@ -74,9 +95,7 @@ void kinit() {
 void* kalloc_page() {
     
     acquire_spinlock(&mem_lock);  // 获取自旋锁，防止并发问题
-    if(debug){
-        printk("mem_lock acquired on CPU %lld\n", cpuid());
-    }
+
 
     if (free_pages_list.next == &free_pages_list) {
         // 空闲链表为空，无法分配页面
@@ -122,73 +141,35 @@ void kfree_page(void* p) {
     release_spinlock(&mem_lock);  // 释放自旋锁
 }
 
+
 //切分版本
 void* kalloc(unsigned long long size) {
+    // 对齐大小，确保最小对齐到 8 字节
+    size = ALIGN_UP(size, 8);
+    int size_need = size;//需要的大小
 
-    debug = 0;
+
+
     // 获取自旋锁，防止并发问题
     acquire_spinlock(&mem_lock_block);
 
-    //为了对齐，不可以是4
-    size += 8;
 
-
-    // 对齐大小，确保最小对齐到 8 字节
-    size = ALIGN_UP(size, 8);
-
-    // 遍历现有的内存池，寻找合适的块
-    MemoryPool* pool = memory_pool_list;
+    slabs* new_slabs = slabs_list;
 
     start_inner_loop:
-    while (pool) {
+    while (new_slabs) {
 
-        MemoryBlock* prev_block = NULL;
-        MemoryBlock* block = pool->free_list;
-
-
-        // 遍历当前内存池的空闲列表
-        while (block) {
-
-            if (block->size >= (int)size ) {
-
-                //只有当块比需要的内存大得多时才切分块
-                if ( block->size  > 16 + (int)size) {
-                    // 如果块比需要的内存大得多，切分块
-                    MemoryBlock* new_block = (MemoryBlock*)((char*)(block) + size);
-
-                    new_block->size = block->size - size;
-
-                    new_block->next = block->next;
-
-                    // 更新当前块的大小和空闲列表
-                    block->size = size;
-                    if (prev_block) {
-                        prev_block->next = new_block;
-                    } else {
-                        pool->free_list = new_block;
-                    }
-                } else {
-                    // 否则直接分配整个块
-                    if (prev_block) {
-                        prev_block->next = block->next;
-                    } else {
-                        pool->free_list = block->next;
-                    }
-                }
-                // 释放自旋锁
-                release_spinlock(&mem_lock_block);
-
-
-                MemoryBlock_destri* block_destri = (MemoryBlock_destri*)block;
-
-                return (void*)(block_destri + 2);  // 返回块之后的实际数据地址
-            }
-            prev_block = block;
-            block = block->next;
+        if(new_slabs->size != size_need){
+            new_slabs = new_slabs->next;
+            goto start_inner_loop;
         }
 
-        pool = pool->next;
+        slab* current_slab = new_slabs->slab_node;
 
+        if(current_slab){
+            new_slabs->slab_node = current_slab->next;
+            return current_slab;
+        }
     }
 
     void* page = kalloc_page();
@@ -197,18 +178,27 @@ void* kalloc(unsigned long long size) {
         return NULL;  // 分配失败
     }
 
-    // 初始化新的内存池
-    pool = (MemoryPool*)page;
-    pool->next = memory_pool_list;
-    memory_pool_list = pool;
 
-    // 初始化物理页内的内存块
-    MemoryBlock* block = (MemoryBlock*)(pool + 1);  // 跳过 MemoryPool 结构
-    block->size = PAGE_SIZE - sizeof(MemoryPool);   // 剩余内存的大小
-    block->next = NULL;
+    
+    //初始化slabs
+    new_slabs = (slabs*)page;
+    new_slabs->next = slabs_list;
+    new_slabs->size = size_need;
 
-    // 将新分配的块插入空闲列表
-    pool->free_list = block;
+    slab* head = (slab*)((char*)new_slabs + sizeof(slabs));
+    slab* current = head;
+
+    while ((char*)current + size_need <= (char*)page + PAGE_SIZE) {
+        current->next = (slab*)((char*)current + size_need);
+        current = current->next;
+    }
+    current->next = NULL; // 确保链表的最后一个节点指向 NULL
+    new_slabs->slab_node = head;
+    
+    //将slabs插入到slabs_list
+    new_slabs->next = slabs_list;
+    slabs_list = new_slabs;
+      
 
     goto start_inner_loop;
 
@@ -229,62 +219,15 @@ void kfree(void* ptr) {
     // 获取自旋锁，防止并发问题
     acquire_spinlock(&mem_lock_block);
 
-    // 获取指向 MemoryBlock 的指针
-    MemoryBlock* block = (MemoryBlock*)((char*)ptr - 8);
+    slabs* return_slabs = (slabs*)(round_down(ptr, PAGE_SIZE));
 
+    slab* head = return_slabs->slab_node;
+    slab* current = (slab*)ptr;
+    current->next = head;
+    return_slabs->slab_node = current;
 
-    // 遍历内存池，找到该块所属的内存池
-    MemoryPool* pool = memory_pool_list;
-    while (pool) {
-        char* pool_start = (char*)pool;
-        char* pool_end = pool_start + PAGE_SIZE;
-
-        if ((char*)block >= pool_start && (char*)block < pool_end) {
-            // 找到所属内存池，准备将块插入空闲列表
-            MemoryBlock* prev = NULL;
-            MemoryBlock* curr = pool->free_list;
-
-            // 寻找空闲块的位置，保持空闲块的地址有序
-            while (curr && (char*)curr < (char*)block) {
-                prev = curr;
-                curr = curr->next;
-            }
-
-            // 尝试与前一个空闲块合并
-            if (prev && (char*)prev + prev->size  == (char*)block) {
-                // 可以与前一个块合并
-                prev->size += block->size ;
-                block = prev;
-            } else {
-                // 不能合并，将块插入到当前位置
-                block->next = curr;
-                if (prev) {
-                    prev->next = block;
-                } else {
-                    pool->free_list = block;
-                }
-            }
-
-            // 尝试与后一个空闲块合并
-            if (curr && (char*)block + block->size  == (char*)curr) {
-                // 可以与后一个块合并
-                block->size += curr->size ;
-                block->next = curr->next;
-            }
-
-            // 释放自旋锁
-            release_spinlock(&mem_lock_block);
-            if(debug){
-                printk("kfree: mem_lock_block released on CPU %lld\n", cpuid());
-            }
-            return;
-        }
-
-        pool = pool->next;
-    }
 
     // 释放自旋锁
     release_spinlock(&mem_lock_block);
-    // 如果没有找到所属的池，说明释放有误
-    printk("kfree: invalid pointer %p\n", ptr);
+
 }
