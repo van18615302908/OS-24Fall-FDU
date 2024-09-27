@@ -43,7 +43,7 @@ ListNode *_detach_from_list(ListNode *node)
 
     if (prev == node)
         return NULL;
-    return prev;
+    return node;//修改为返回删除的节点
 }
 
 QueueNode *add_to_queue(QueueNode **head, QueueNode *node)
