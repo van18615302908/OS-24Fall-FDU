@@ -10,11 +10,13 @@ RefCount kalloc_page_cnt;
 
 int debug = 0;
 
+#define MAX_SIZE 1000
 
 // 定义一个空闲页结构，包含 ListNode
 typedef struct FreePage {
     ListNode node;  // 使用 ListNode 来管理空闲页
 } FreePage;
+
 
 
 
@@ -32,13 +34,13 @@ typedef struct slabs{
     struct slab* slab_node;
 }slabs;
 
+typedef struct SlabList{
+    struct Slabs* head;
+} SlabList;
 
 
-// static MemoryPool* memory_pool_list = NULL;  // 管理所有的内存池
 
-static slabs* slabs_list = NULL;
-
-
+SlabList slabs_list_glo[MAX_SIZE];
 
 // 空闲页链表的头指针
 static ListNode free_pages_list;
@@ -135,6 +137,7 @@ void kfree_page(void* p) {
 
 //切分版本
 void* kalloc(unsigned long long size) {
+
     // 对齐大小，确保最小对齐到 8 字节
     size = ALIGN_UP(size, 8);
     int size_need = size;//需要的大小
@@ -145,7 +148,7 @@ void* kalloc(unsigned long long size) {
     acquire_spinlock(&mem_lock_block);
 
     start_loop:
-    slabs* new_slabs = slabs_list;
+    slabs* new_slabs = (slabs*)slabs_list_glo[size_need / 8 - 1].head;
     start_inner_loop:
     
     while (new_slabs) {
@@ -198,9 +201,13 @@ void* kalloc(unsigned long long size) {
     current->next = NULL; // 确保链表的最后一个节点指向 NULL
     new_slabs->slab_node = head;
     
+
+
     //将slabs插入到slabs_list
-    new_slabs->next = slabs_list;
-    slabs_list = new_slabs;
+    int index = size_need / 8 - 1;
+    slabs* slps_head = (slabs*)slabs_list_glo[index].head;
+    new_slabs->next = slps_head; 
+    slabs_list_glo[index].head = (struct Slabs *)new_slabs;
 
     goto start_loop;
 
