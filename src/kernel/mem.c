@@ -34,11 +34,10 @@ typedef struct slabs{
     struct slab* slab_node;
 }slabs;
 
+//储存页的数组
 typedef struct SlabList{
     struct Slabs* head;
 } SlabList;
-
-
 
 SlabList slabs_list_glo[MAX_SIZE];
 
@@ -142,8 +141,6 @@ void* kalloc(unsigned long long size) {
     size = ALIGN_UP(size, 8);
     int size_need = size;//需要的大小
 
-    // printk("size_need: %d\n",size_need);
-
     // 获取自旋锁，防止并发问题
     acquire_spinlock(&mem_lock_block);
 
@@ -171,7 +168,6 @@ void* kalloc(unsigned long long size) {
         new_slabs = new_slabs->next;
         goto start_inner_loop;
     }
-    // printk("kalloc: no suitable slabs：%d\n", size_need);
 
     //没有合适的slabs，需要重新分配
     void* page = kalloc_page();
@@ -182,16 +178,13 @@ void* kalloc(unsigned long long size) {
     }
 
 
-    
     //初始化slabs
     new_slabs = (slabs*)page;
     // new_slabs->next = slabs_list;
     new_slabs->size = size_need;
 
-
     slab* head = (slab*)((char*)new_slabs + sizeof(slabs));
     slab* current = head;
-
 
     while ((char*)current + 2*size_need < (char*)page + PAGE_SIZE) {
         current->next = (slab*)((char*)current + size_need);
@@ -201,7 +194,6 @@ void* kalloc(unsigned long long size) {
     current->next = NULL; // 确保链表的最后一个节点指向 NULL
     new_slabs->slab_node = head;
     
-
 
     //将slabs插入到slabs_list
     int index = size_need / 8 - 1;
@@ -219,7 +211,6 @@ void* kalloc(unsigned long long size) {
 
 
 void kfree(void* ptr) {
-
 
     if (!ptr) {
         // 释放空指针，直接返回
