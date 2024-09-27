@@ -30,6 +30,7 @@ typedef struct slab
 //储存slab的链表
 typedef struct slabs{
     int size;
+    int num;
     struct slabs* next;
     struct slab* slab_node;
 }slabs;
@@ -161,6 +162,7 @@ void* kalloc(unsigned long long size) {
         if(current_slab){
             new_slabs->slab_node = current_slab->next;
             release_spinlock(&mem_lock_block);
+            new_slabs->num--;
             // printk("kalloc 成功: %d\n", size_need);
             return current_slab;
         }
@@ -185,18 +187,21 @@ void* kalloc(unsigned long long size) {
 
     slab* head = (slab*)((char*)new_slabs + sizeof(slabs));
     slab* current = head;
-
+    int k = 0;
     while ((char*)current + 2*size_need < (char*)page + PAGE_SIZE) {
         current->next = (slab*)((char*)current + size_need);
         current = current->next;
+        k++;
     }
 
     current->next = NULL; // 确保链表的最后一个节点指向 NULL
     new_slabs->slab_node = head;
+    new_slabs->num = k;
     
 
     //将slabs插入到slabs_list
     int index = size_need / 8 - 1;
+    
     slabs* slps_head = (slabs*)slabs_list_glo[index].head;
     new_slabs->next = slps_head; 
     slabs_list_glo[index].head = (struct Slabs *)new_slabs;
@@ -226,6 +231,26 @@ void kfree(void* ptr) {
     slab* current = (slab*)ptr;
     current->next = head;
     return_slabs->slab_node = current;
+    return_slabs->num++;
+    if(return_slabs->num == (int)(PAGE_SIZE - sizeof(return_slabs))/return_slabs->size - 1){
+        //这一页的slab全部被释放
+        slabs* current_slabs = (slabs*)slabs_list_glo[return_slabs->size / 8 - 1].head;
+        slabs* pre_slabs = NULL;
+        while (current_slabs)
+        {
+            if(current_slabs == return_slabs){
+                if(pre_slabs){
+                    pre_slabs->next = current_slabs->next;
+                }else{
+                    slabs_list_glo[return_slabs->size / 8 - 1].head = (struct Slabs *)current_slabs->next;
+                }
+                break;
+            }
+            pre_slabs = current_slabs;
+            current_slabs = current_slabs->next;
+        }
+        kfree_page(return_slabs);
+    }
 
     // 释放自旋锁
     release_spinlock(&mem_lock_block);
