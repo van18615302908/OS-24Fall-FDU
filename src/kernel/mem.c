@@ -18,33 +18,12 @@ typedef struct FreePage {
 
 
 
-
-//在每个分配的内存块中保存其大小，以便在释放时能够知道如何正确回收。
-typedef struct MemoryBlock {
-    int size;  // 记录内存块的大小
-    struct MemoryBlock* next; // 指向下一个空闲块
-} MemoryBlock;
-
-typedef struct MemoryBlock_destri{
-    int size;
-}MemoryBlock_destri;
-
-//每个物理页会被视为内存池，池中包含多个 MemoryBlock。在池内进行分配和释放时，需要管理这些块。
-typedef struct MemoryPool {
-    MemoryBlock* free_list;  // 空闲块链表
-    struct MemoryPool* next; // 指向下一个内存池
-} MemoryPool;
-
 //储存用slab
 typedef struct slab
 {
     struct slab* next; // 指向下一个内存块
 }slab;
 
-// //分配用slab
-// typedef struct slab_node{
-//     int size;
-// }slab_node;
 
 //储存slab的链表
 typedef struct slabs{
@@ -97,6 +76,7 @@ void* kalloc_page() {
     acquire_spinlock(&mem_lock);  // 获取自旋锁，防止并发问题
 
 
+
     if (free_pages_list.next == &free_pages_list) {
         // 空闲链表为空，无法分配页面
         release_spinlock(&mem_lock);
@@ -114,6 +94,17 @@ void* kalloc_page() {
         release_spinlock(&mem_lock);
         // printk("kalloc_page:返回未对齐的页面地址 %p\n", page);
         return NULL;
+    }
+    // 打印当前和接下来的十个next元素
+    if (debug)
+    {
+        ListNode* current = free_pages_list.next;
+        printk("kalloc_page_distribution: free_pages_list.next=%p\n", current);
+
+        for (int i = 0; i < 10 && current != &free_pages_list; i++) {
+            current = current->next;
+            printk("Next element %d: %p %p\n", i + 1, current, &current);
+        }
     }
 
     increment_rc(&kalloc_page_cnt);  // 更新分配页面计数
@@ -148,18 +139,19 @@ void* kalloc(unsigned long long size) {
     size = ALIGN_UP(size, 8);
     int size_need = size;//需要的大小
 
-
+    // printk("size_need: %d\n",size_need);
 
     // 获取自旋锁，防止并发问题
     acquire_spinlock(&mem_lock_block);
 
-
+    start_loop:
     slabs* new_slabs = slabs_list;
-
     start_inner_loop:
+    
     while (new_slabs) {
 
         if(new_slabs->size != size_need){
+            //大小不匹配
             new_slabs = new_slabs->next;
             goto start_inner_loop;
         }
@@ -168,12 +160,20 @@ void* kalloc(unsigned long long size) {
 
         if(current_slab){
             new_slabs->slab_node = current_slab->next;
+            release_spinlock(&mem_lock_block);
+            // printk("kalloc 成功: %d\n", size_need);
             return current_slab;
         }
+        //这一页没有空闲slab
+        new_slabs = new_slabs->next;
+        goto start_inner_loop;
     }
+    // printk("kalloc: no suitable slabs：%d\n", size_need);
 
+    //没有合适的slabs，需要重新分配
     void* page = kalloc_page();
-    
+    // printk("kalloc_page: %p\n", page);
+    debug = 0;
     if (!page) {
         return NULL;  // 分配失败
     }
@@ -182,25 +182,27 @@ void* kalloc(unsigned long long size) {
     
     //初始化slabs
     new_slabs = (slabs*)page;
-    new_slabs->next = slabs_list;
+    // new_slabs->next = slabs_list;
     new_slabs->size = size_need;
+
 
     slab* head = (slab*)((char*)new_slabs + sizeof(slabs));
     slab* current = head;
 
-    while ((char*)current + size_need <= (char*)page + PAGE_SIZE) {
+
+    while ((char*)current + 2*size_need < (char*)page + PAGE_SIZE) {
         current->next = (slab*)((char*)current + size_need);
         current = current->next;
     }
+
     current->next = NULL; // 确保链表的最后一个节点指向 NULL
     new_slabs->slab_node = head;
     
     //将slabs插入到slabs_list
     new_slabs->next = slabs_list;
     slabs_list = new_slabs;
-      
 
-    goto start_inner_loop;
+    goto start_loop;
 
     return NULL;
 
@@ -211,6 +213,7 @@ void* kalloc(unsigned long long size) {
 
 void kfree(void* ptr) {
 
+
     if (!ptr) {
         // 释放空指针，直接返回
         return;
@@ -219,13 +222,12 @@ void kfree(void* ptr) {
     // 获取自旋锁，防止并发问题
     acquire_spinlock(&mem_lock_block);
 
-    slabs* return_slabs = (slabs*)(round_down(ptr, PAGE_SIZE));
+    slabs* return_slabs = (slabs*)(round_down((u64)ptr, PAGE_SIZE));
 
     slab* head = return_slabs->slab_node;
     slab* current = (slab*)ptr;
     current->next = head;
     return_slabs->slab_node = current;
-
 
     // 释放自旋锁
     release_spinlock(&mem_lock_block);
