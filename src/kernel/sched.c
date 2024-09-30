@@ -8,6 +8,17 @@
 
 extern bool panic_flag;
 
+
+
+//`kernel/sched.c` 的注释中，针对 sched queue 的提示不明确，此处应该根据你对 sched queue 设计来决定，是否把状态为 SLEEPING/ZOMBIE 的进程移除。
+
+
+
+
+
+
+
+
 extern void swtch(KernelContext *new_ctx, KernelContext **old_ctx);
 
 void init_sched()
