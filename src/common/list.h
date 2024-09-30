@@ -2,7 +2,6 @@
 
 #include <common/defines.h>
 #include <common/spinlock.h>
-#include <kernel/printk.h>
 
 // ListNode represents one node on a circular list.
 typedef struct ListNode {
@@ -34,23 +33,23 @@ ListNode *_detach_from_list(ListNode *node);
 // * List operations with locks
 #define merge_list(lock, node1, node2)             \
     ({                                             \
-        acquire_spinlock(lock);                   \
+        acquire_spinlock(lock);                    \
         ListNode *__t = _merge_list(node1, node2); \
-        release_spinlock(lock);                   \
+        release_spinlock(lock);                    \
         __t;                                       \
     })
 #define insert_into_list(lock, list, node)             \
     ({                                                 \
-        acquire_spinlock(lock);                       \
+        acquire_spinlock(lock);                        \
         ListNode *__t = _insert_into_list(list, node); \
-        release_spinlock(lock);                       \
+        release_spinlock(lock);                        \
         __t;                                           \
     })
 #define detach_from_list(lock, node)             \
     ({                                           \
-        acquire_spinlock(lock);                 \
+        acquire_spinlock(lock);                  \
         ListNode *__t = _detach_from_list(node); \
-        release_spinlock(lock);                 \
+        release_spinlock(lock);                  \
         __t;                                     \
     })
 
