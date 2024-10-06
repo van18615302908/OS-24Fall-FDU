@@ -21,9 +21,10 @@ typedef struct KernelContext {
 } KernelContext;
 
 // embeded data for procs
-struct schinfo {
+typedef struct schinfo {
     // TODO: customize your sched info
-};
+    ListNode rq;//运行队列
+} Schinfo;
 
 typedef struct Proc {
     bool killed;

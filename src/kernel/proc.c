@@ -11,6 +11,11 @@ Proc root_proc;
 void kernel_entry();
 void proc_entry();
 
+// 定义全局锁和信号量
+struct lock global_lock;
+struct semaphore global_sem;
+
+
 // init_kproc initializes the kernel process
 // NOTE: should call after kinit
 void init_kproc()
@@ -18,6 +23,11 @@ void init_kproc()
     // TODO:
     // 1. init global resources (e.g. locks, semaphores)
     // 2. init the root_proc (finished)
+
+    // 初始化全局锁
+    init_lock(&global_lock);
+    // 初始化全局信号量，初始值设为 1，表示资源可用
+    init_semaphore(&global_sem, 1);
 
     init_proc(&root_proc);
     root_proc.parent = &root_proc;
