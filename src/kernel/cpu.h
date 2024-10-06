@@ -7,9 +7,10 @@
 
 struct sched {
     // TODO: customize your sched info
-    struct proc* thisproc;
+    struct proc* running_proc;
     struct proc* idle;
 };
+
 struct sched_info
 {
     ListNode rq;
