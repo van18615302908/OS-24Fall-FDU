@@ -7,7 +7,14 @@
 
 struct sched {
     // TODO: customize your sched info
+    struct proc* thisproc;
+    struct proc* idle;
 };
+struct sched_info
+{
+    ListNode rq;
+};
+
 
 struct cpu {
     bool online;
