@@ -12,8 +12,95 @@ void kernel_entry();
 void proc_entry();
 
 // 定义全局锁和信号量
-struct lock global_lock;
-struct semaphore global_sem;
+static SpinLock global_lock;
+
+// struct semaphore global_sem;
+
+
+//pidmap
+typedef struct pidmap
+{
+    unsigned int nr_free;
+    char page[4096];
+} pidmap_t;
+#define PID_MAX_DEFAULT 0x8000
+#define BITS_PER_BYTE 8
+#define BITS_PER_PAGE (PAGE_SIZE * BITS_PER_BYTE)
+#define BITS_PER_PAGE_MASK (BITS_PER_PAGE - 1)
+static pidmap_t pidmap = { PID_MAX_DEFAULT, {0}};
+static int last_pid = -1;
+
+static int test_and_set_bit(int offset, void *addr)
+{
+    unsigned long mask = 1UL << (offset & (sizeof(unsigned long) * BITS_PER_BYTE - 1));
+    unsigned long *p = ((unsigned long*)addr) + (offset >> (sizeof(unsigned long) + 1));
+    unsigned long old = *p;
+ 
+    *p = old | mask;
+ 
+    return (old & mask) != 0;
+}
+
+static void clear_bit(int offset, void *addr)
+{
+    unsigned long mask = 1UL << (offset & (sizeof(unsigned long) * BITS_PER_BYTE - 1));
+    unsigned long *p = ((unsigned long*)addr) + (offset >> (sizeof(unsigned long) + 1));
+    unsigned long old = *p;
+    *p = old & ~mask;
+}
+
+static int find_next_zero_bit(void *addr, int size, int offset)
+{
+    unsigned long *p;
+    unsigned long mask;
+ 
+    while (offset < size)
+    {
+        p = ((unsigned long*)addr) + (offset >> (sizeof(unsigned long) + 1));
+        mask = 1UL << (offset & (sizeof(unsigned long) * BITS_PER_BYTE - 1));
+ 
+        if ((~(*p) & mask))
+        {
+            break;
+        }
+        ++offset;
+    }
+ 
+    return offset;
+}
+
+static int alloc_pidmap()
+{
+    int pid = last_pid + 1;
+    int offset = pid & BITS_PER_PAGE_MASK;
+    
+    if (!pidmap.nr_free)
+    {
+        return -1;
+    }
+ 
+    offset = find_next_zero_bit(&pidmap.page, BITS_PER_PAGE, offset);
+    if(offset == BITS_PER_PAGE) offset = find_next_zero_bit(&pidmap.page, offset-1, 30);
+    if (BITS_PER_PAGE != offset && !test_and_set_bit(offset, &pidmap.page))
+    {
+        --pidmap.nr_free;
+        last_pid = offset;
+        return offset;
+    }
+ 
+    return -1;
+}
+
+static void free_pidmap(int pid)
+{
+    int offset = pid & BITS_PER_PAGE_MASK;
+ 
+    if(pid > 29)pidmap.nr_free++;
+    clear_bit(offset,  &pidmap.page);
+}
+
+
+
 
 
 // init_kproc initializes the kernel process
@@ -25,9 +112,10 @@ void init_kproc()
     // 2. init the root_proc (finished)
 
     // 初始化全局锁
-    init_lock(&global_lock);
+    init_spinlock(&global_lock);
+
     // 初始化全局信号量，初始值设为 1，表示资源可用
-    init_semaphore(&global_sem, 1);
+    // init_semaphore(&global_sem, 1);
 
     init_proc(&root_proc);
     root_proc.parent = &root_proc;
@@ -39,6 +127,24 @@ void init_proc(Proc *p)
     // TODO:
     // setup the Proc with kstack and pid allocated
     // NOTE: be careful of concurrency
+
+    acquire_spinlock(&global_lock);
+    memset(p, 0, sizeof(*p));
+    p->killed = false;
+    p->idle = false;
+    p->pid = alloc_pid();
+
+    p->state = UNUSED;
+    init_sem(&p->childexit, 0);
+    list_init(&p->children);
+    init_list_node(&p->ptnode);
+    p->parent = NULL;
+    p->kstack = kalloc_page();
+    ASSERT(p->kstack != NULL);
+    memset((void *)p->kstack, 0, PAGE_SIZE);
+    p->kcontext = p->kstack + PAGE_SIZE - sizeof(KernelContext) - sizeof(UserContext);
+    p->ucontext = p->kstack + PAGE_SIZE - sizeof(UserContext);
+    release_spinlock(&global_lock);
 }
 
 Proc *create_proc()
@@ -53,6 +159,12 @@ void set_parent_to_this(Proc *proc)
     // TODO: set the parent of proc to thisproc
     // NOTE: maybe you need to lock the process tree
     // NOTE: it's ensured that the old proc->parent = NULL
+    ASSERT(proc->parent == NULL);
+    setup_checker(0);
+    acquire_spinlock(&global_lock);
+    proc->parent = thisproc();
+    list_push_back(&(thisproc()->children), &(proc->ptnode));
+    release_spinlock(&global_lock);
 }
 
 int start_proc(Proc *p, void (*entry)(u64), u64 arg)
@@ -62,6 +174,18 @@ int start_proc(Proc *p, void (*entry)(u64), u64 arg)
     // 2. setup the kcontext to make the proc start with proc_entry(entry, arg)
     // 3. activate the proc and return its pid
     // NOTE: be careful of concurrency
+    if(p->parent == NULL){
+        acquire_spinlock(&global_lock);
+        p->parent = &root_proc;
+        _insert_into_list(&root_proc.children, &p->ptnode);
+        release_spinlock(&global_lock);
+    }
+    p->kcontext->lr = (u64)&proc_entry;
+    p->kcontext->x0 = (u64)entry;
+    p->kcontext->x1 = (u64)arg;
+    int id = p->pid;
+    activate_proc(p);
+    return id;
 }
 
 int wait(int *exitcode)
@@ -71,6 +195,26 @@ int wait(int *exitcode)
     // 2. wait for childexit
     // 3. if any child exits, clean it up and return its pid and exitcode
     // NOTE: be careful of concurrency
+    auto this = thisproc();
+    if(_empty_list(&this->children))
+        return -1;
+    wait_sem(&this->childexit);
+    acquire_spinlock(&global_lock);
+    auto p = this->children.prev;
+    auto proc = container_of(p, struct Proc, ptnode);
+    if(is_zombie(proc)){
+        *exitcode = proc->exitcode;
+        int id = proc->pid;
+        _detach_from_list(p);
+        kfree_page(proc->kstack);
+        kfree(proc);
+        free_pidmap(id);
+        release_spinlock(&global_lock);
+        return id;
+    }
+    PANIC();
+    release_spinlock(&global_lock);
+    return -1;
 }
 
 NO_RETURN void exit(int code)
@@ -81,6 +225,38 @@ NO_RETURN void exit(int code)
     // 3. transfer children to the root_proc, and notify the root_proc if there is zombie
     // 4. sched(ZOMBIE)
     // NOTE: be careful of concurrency
-
+    auto this = thisproc();
+    this->exitcode = code;
+    //TODO clean up file resources
+    acquire_spinlock(&global_lock);
+    ListNode* pre = NULL;
+    _for_in_list(p, &this->children){
+        if(pre != NULL && pre != &this->children){
+            auto proc = container_of(pre, struct Proc, ptnode);
+            proc->parent = &root_proc;
+            auto t = &root_proc.children;
+            if(is_zombie(proc)){
+                pre->prev = t->prev;
+                pre->next = t;
+                t->prev->next = pre;
+                t->prev = pre;
+                post_sem(&root_proc.childexit);
+            }else{
+                _insert_into_list(t, pre);
+            }
+        }
+        pre = p;
+    }
+    init_list_node(&this->children);
+    pre = &this->ptnode;
+    _detach_from_list(pre);
+    auto t = &this->parent->children;
+    pre->prev = t->prev;
+    pre->next = t;
+    t->prev->next = pre;
+    t->prev = pre;
+    post_sem(&this->parent->childexit);
+    release_spinlock(&global_lock);
+    sched( ZOMBIE);
     PANIC(); // prevent the warning of 'no_return function returns'
 }

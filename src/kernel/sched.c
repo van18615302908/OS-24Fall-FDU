@@ -28,9 +28,7 @@ void init_sched()
         p->state = RUNNING;
         cpus[i].sched.this_proc = cpus[i].sched.idle = p;
 
-        // 每个 CPU 独立的运行队列和队列锁
-        // init_schinfo(&cpus[i].sched.rq);       // 初始化CPU专属的运行队列
-        // init_spinlock(&cpus[i].sched.rqlock);    // 初始化该CPU队列的锁
+
     }
 
 }
