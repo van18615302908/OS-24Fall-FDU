@@ -5,6 +5,7 @@
 #include <aarch64/intrinsic.h>
 #include <kernel/cpu.h>
 #include <common/rbtree.h>
+#include <driver/timer.h>
 
 extern bool panic_flag;
 
@@ -48,13 +49,13 @@ void init_schinfo(struct schinfo *p)
 void acquire_sched_lock()
 {
     // TODO: acquire the sched_lock if need
-    _acquire_spinlock(&sched_lock);
+    acquire_spinlock(&sched_lock);
 }
 
 void release_sched_lock()
 {
     // TODO: release the sched_lock if need
-    _release_spinlock(&sched_lock);
+    release_spinlock(&sched_lock);
 }
 
 bool is_zombie(Proc *p)
@@ -72,9 +73,9 @@ bool activate_proc(Proc *p)
     // if the proc->state is RUNNING/RUNNABLE, do nothing
     // if the proc->state if SLEEPING/UNUSED, set the process state to RUNNABLE and add it to the sched queue
     // else: panic
-    _acquire_sched_lock();
+    acquire_sched_lock();
     if(p->state == RUNNING || p->state == RUNNABLE){
-        _release_sched_lock();
+        release_sched_lock();
         return false;
     }else if(p->state == SLEEPING || p->state == UNUSED){
         p->state = RUNNABLE;
@@ -82,7 +83,7 @@ bool activate_proc(Proc *p)
     }else{
         PANIC();
     }
-    _release_sched_lock();
+    release_sched_lock();
     return true;
 }
 
@@ -99,18 +100,18 @@ static Proc *pick_next()
 {
     // TODO: if using template sched function, you should implement this routinue
     // choose the next process to run, and return idle if no runnable process
-    _acquire_spinlock(&rqlock);
+    acquire_spinlock(&rqlock);
     _for_in_list(p, &rq){
         if(p == &rq)
             continue;
         auto proc = container_of(p, struct Proc, schinfo.rq);
         if(proc->state == RUNNABLE){
-            _release_spinlock(&rqlock);
+            release_spinlock(&rqlock);
             return proc;
         }
     }
     //下一个lab可以设置一些更精妙的算法
-    _release_spinlock(&rqlock);
+    release_spinlock(&rqlock);
     return cpus[cpuid()].sched.idle;
 }
 
@@ -118,7 +119,9 @@ static void update_this_proc(Proc *p)
 {
     // TODO: you should implement this routinue
     // update thisproc to the choosen process
-    reset_clock(1000);
+
+    // reset_clock(1000);
+    timer_init(1000);
     cpus[cpuid()].sched.this_proc = p;    
 }
 

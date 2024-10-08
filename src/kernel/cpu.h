@@ -8,8 +8,8 @@
 
 struct sched {
     // TODO: customize your sched info
-    struct proc* this_proc;
-    struct proc* idle;
+    struct Proc* this_proc;
+    struct Proc* idle;
 };
 
 
