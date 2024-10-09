@@ -10,7 +10,7 @@
 extern bool panic_flag;
 
 extern void swtch(KernelContext *new_ctx, KernelContext **old_ctx);
-
+int debug_sched = 0;
 
 static SpinLock sched_lock;
 static ListNode rq;
@@ -21,39 +21,42 @@ void init_sched()
     // TODO: initialize the scheduler
     // 1. initialize the resources (e.g. locks, semaphores)
     // 2. initialize the scheduler info of each CPU
+    if(debug_sched)printk("init_sched\n");
     init_spinlock(&sched_lock);
-
+    init_list_node(&rq);
     for(int i=0; i<NCPU; i++){
         struct Proc* p = kalloc(sizeof(struct Proc));
         p->idle = 1;
         p->state = RUNNING;
         cpus[i].sched.this_proc = cpus[i].sched.idle = p;
-
-
     }
 
 }
 
 Proc *thisproc()
 {
+    if(debug_sched)printk("thisproc\n");
     // TODO: return the current process
     return cpus[cpuid()].sched.this_proc;
 }
 
 void init_schinfo(struct schinfo *p)
 {
+    if(debug_sched)printk("init_schinfo\n");
     // TODO: initialize your customized schinfo for every newly-created process
     init_list_node(&p->rq);
 }
 
 void acquire_sched_lock()
 {
+    // if(debug_sched)printk("acquire_sched_lock\n");
     // TODO: acquire the sched_lock if need
     acquire_spinlock(&sched_lock);
 }
 
 void release_sched_lock()
 {
+    // if(debug_sched)printk("release_sched_lock\n");
     // TODO: release the sched_lock if need
     release_spinlock(&sched_lock);
 }
@@ -73,6 +76,7 @@ bool activate_proc(Proc *p)
     // if the proc->state is RUNNING/RUNNABLE, do nothing
     // if the proc->state if SLEEPING/UNUSED, set the process state to RUNNABLE and add it to the sched queue
     // else: panic
+    if(debug_sched)printk("activate_proc\n");
     acquire_sched_lock();
     if(p->state == RUNNING || p->state == RUNNABLE){
         release_sched_lock();
@@ -91,15 +95,22 @@ static void update_this_state(enum procstate new_state)
 {
     // TODO: if you use template sched function, you should implement this routinue
     // update the state of current process to new_state, and modify the sched queue if necessary
+    if(debug_sched)printk("update_this_state\n");
+
     thisproc()->state = new_state;
-    if(new_state == SLEEPING || new_state == ZOMBIE)
+    if(debug_sched)printk("update_this_state: new_state = %d\n", new_state);
+    if(new_state == SLEEPING || new_state == ZOMBIE){
+        // if(debug_sched)printk("update_this_state: remove from rq\n");
         detach_from_list(&rqlock, &thisproc()->schinfo.rq);
+        // if(debug_sched)printk("update_this_state: remove from rq done\n");
+    }
 }
 
 static Proc *pick_next()
 {
     // TODO: if using template sched function, you should implement this routinue
     // choose the next process to run, and return idle if no runnable process
+    if(debug_sched)printk("pick_next\n");
     acquire_spinlock(&rqlock);
     _for_in_list(p, &rq){
         if(p == &rq)
@@ -107,11 +118,13 @@ static Proc *pick_next()
         auto proc = container_of(p, struct Proc, schinfo.rq);
         if(proc->state == RUNNABLE){
             release_spinlock(&rqlock);
+            if(debug_sched)printk("pick_next: pid = %d\n", proc->pid);
             return proc;
         }
     }
     //下一个lab可以设置一些更精妙的算法
     release_spinlock(&rqlock);
+    if(debug_sched)printk("pick_next: idle\n");
     return cpus[cpuid()].sched.idle;
 }
 
@@ -120,9 +133,10 @@ static void update_this_proc(Proc *p)
     // TODO: you should implement this routinue
     // update thisproc to the choosen process
 
-    // reset_clock(1000);
+    if(debug_sched)printk("update_this_proc\n");
     timer_init(1000);
-    cpus[cpuid()].sched.this_proc = p;    
+    cpus[cpuid()].sched.this_proc = p;  
+    if(debug_sched)printk("update_this_proc: pid = %d\n", p->pid);
 }
 
 // A simple scheduler.
@@ -130,6 +144,7 @@ static void update_this_proc(Proc *p)
 // call with sched_lock
 void sched(enum procstate new_state)
 {
+    if(debug_sched)printk("sched\n");
     auto this = thisproc();
     ASSERT(this->state == RUNNING);
     update_this_state(new_state);
@@ -138,13 +153,20 @@ void sched(enum procstate new_state)
     ASSERT(next->state == RUNNABLE);
     next->state = RUNNING;
     if (next != this) {
+        if (debug_sched) {
+            printk("switch %d -> %d\n", this->pid, next->pid);
+        }
+        
         swtch(next->kcontext, &this->kcontext);
+        if(debug_sched)printk("swtch done\n");
     }
     release_sched_lock();
+    if(debug_sched)printk("sched done\n");
 }
 
 u64 proc_entry(void (*entry)(u64), u64 arg)
-{
+{   
+    if(debug_sched)printk("proc_entry\n");
     release_sched_lock();
     set_return_addr(entry);
     return arg;

@@ -14,7 +14,7 @@ void proc_entry();
 // 定义全局锁
 static SpinLock global_lock;
 
-int debug_fyy = 1;
+int debug_fyy = 0;
 
 //pidmap
 typedef struct pidmap
@@ -115,8 +115,6 @@ void init_kproc()
     // 初始化全局锁
     init_spinlock(&global_lock);
 
-    // 初始化全局信号量，初始值设为 1，表示资源可用
-    // init_semaphore(&global_sem, 1);
 
     init_proc(&root_proc);
     root_proc.parent = &root_proc;
@@ -130,23 +128,20 @@ void init_proc(Proc *p)
     // NOTE: be careful of concurrency
     if(debug_fyy)printk("init_proc\n");
 
-    acquire_spinlock(&global_lock);
-    memset(p, 0, sizeof(*p));
     p->killed = false;
     p->idle = false;
+    acquire_spinlock(&global_lock);
     p->pid = alloc_pidmap();
-
-    p->state = UNUSED;
-    init_sem(&p->childexit, 0);
-    init_list_node(&p->children);
-    init_list_node(&p->ptnode);
-    p->parent = NULL;
-    p->kstack = kalloc_page();
-    ASSERT(p->kstack != NULL);
-    memset((void *)p->kstack, 0, PAGE_SIZE);
-    p->kcontext = p->kstack + PAGE_SIZE - sizeof(KernelContext) - sizeof(UserContext);
-    p->ucontext = p->kstack + PAGE_SIZE - sizeof(UserContext);
     release_spinlock(&global_lock);
+    p->state = UNUSED;
+    init_sem(&(p->childexit),0);
+    init_list_node(&(p->children));
+    init_list_node(&(p->ptnode));
+    p->parent = NULL;
+    init_schinfo(&(p->schinfo));
+    p->kstack = kalloc_page();
+    p->ucontext = p->kstack + PAGE_SIZE - 16 - sizeof(UserContext);
+    p->kcontext = p->kstack + PAGE_SIZE - 16 - sizeof(UserContext) - sizeof(KernelContext);
 }
 
 Proc *create_proc()
