@@ -26,7 +26,7 @@ void init_sched()
     init_list_node(&rq);
     for(int i=0; i<NCPU; i++){
         struct Proc* p = kalloc(sizeof(struct Proc));
-        p->idle = 1;
+        p->idle = true;
         p->state = RUNNING;
         cpus[i].sched.this_proc = cpus[i].sched.idle = p;
     }
@@ -70,6 +70,7 @@ bool is_zombie(Proc *p)
     return r;
 }
 
+
 bool activate_proc(Proc *p)
 {
     // TODO:
@@ -99,7 +100,7 @@ static void update_this_state(enum procstate new_state)
 
     thisproc()->state = new_state;
     if(debug_sched)printk("update_this_state: new_state = %d\n", new_state);
-    if(new_state == SLEEPING || new_state == ZOMBIE){
+    if(new_state == SLEEPING || new_state == ZOMBIE ){
         // if(debug_sched)printk("update_this_state: remove from rq\n");
         detach_from_list(&rqlock, &thisproc()->schinfo.rq);
         // if(debug_sched)printk("update_this_state: remove from rq done\n");
@@ -115,8 +116,9 @@ static Proc *pick_next()
     _for_in_list(p, &rq){
         if(p == &rq)
             continue;
+        
         auto proc = container_of(p, struct Proc, schinfo.rq);
-        if(proc->state == RUNNABLE){
+        if(proc->state == RUNNABLE && !proc->idle){
             release_spinlock(&rqlock);
             if(debug_sched)printk("pick_next: pid = %d\n", proc->pid);
             return proc;
@@ -124,7 +126,6 @@ static Proc *pick_next()
     }
     //下一个lab可以设置一些更精妙的算法
     release_spinlock(&rqlock);
-    if(debug_sched)printk("pick_next: idle\n");
     return cpus[cpuid()].sched.idle;
 }
 
@@ -134,8 +135,10 @@ static void update_this_proc(Proc *p)
     // update thisproc to the choosen process
 
     if(debug_sched)printk("update_this_proc\n");
-    timer_init(1000);
+    // timer_init(1000);
+    acquire_spinlock(&rqlock);
     cpus[cpuid()].sched.this_proc = p;  
+    release_spinlock(&rqlock);
     if(debug_sched)printk("update_this_proc: pid = %d\n", p->pid);
 }
 
@@ -145,18 +148,30 @@ static void update_this_proc(Proc *p)
 void sched(enum procstate new_state)
 {
     if(debug_sched)printk("sched\n");
+
     auto this = thisproc();
     ASSERT(this->state == RUNNING);
     update_this_state(new_state);
     auto next = pick_next();
     update_this_proc(next);
+    // if(next->state != RUNNABLE && !next->idle){
+    //     printk("state = %d pid = %d idle = %d \n", next->state, next->pid, next->idle);
+    //     _for_in_list(p, &rq){
+    //         if(p == &rq)
+    //             continue;
+            
+    //         auto proc = container_of(p, struct Proc, schinfo.rq);
+    //         printk("state = %d pid = %d idle = %d \n", proc->state, proc->pid, proc->idle);
+    //     }
+
+    // }
     ASSERT(next->state == RUNNABLE);
     next->state = RUNNING;
-    if (next != this) {
+    if (next->pid != this->pid) {
         if (debug_sched) {
             printk("switch %d -> %d\n", this->pid, next->pid);
         }
-        
+
         swtch(next->kcontext, &this->kcontext);
         if(debug_sched)printk("swtch done\n");
     }

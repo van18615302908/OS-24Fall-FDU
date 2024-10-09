@@ -202,17 +202,21 @@ int wait(int *exitcode)
     wait_sem(&this->childexit);
     acquire_spinlock(&global_lock);
     auto p = this->children.prev;
-    auto proc = container_of(p, struct Proc, ptnode);
-    if(is_zombie(proc)){
-        *exitcode = proc->exitcode;
-        int id = proc->pid;
-        _detach_from_list(p);
-        kfree_page(proc->kstack);
-        kfree(proc);
-        free_pidmap(id);
-        release_spinlock(&global_lock);
-        return id;
+    while(p != &this->children){
+        auto proc = container_of(p, struct Proc, ptnode);
+        if(is_zombie(proc)){
+            *exitcode = proc->exitcode;
+            int id = proc->pid;
+            _detach_from_list(p);
+            kfree_page(proc->kstack);
+            kfree(proc);
+            free_pidmap(id);
+            release_spinlock(&global_lock);
+            return id;
+        }
+        p = p->prev;
     }
+    printk("error in proc %d \n",this->state);
     PANIC();
     release_spinlock(&global_lock);
     return -1;
@@ -259,6 +263,7 @@ NO_RETURN void exit(int code)
     t->prev = pre;
     post_sem(&this->parent->childexit);
     release_spinlock(&global_lock);
-    sched( ZOMBIE);
+    acquire_sched_lock();
+    sched(ZOMBIE);
     PANIC(); // prevent the warning of 'no_return function returns'
 }
