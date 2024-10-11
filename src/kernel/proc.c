@@ -199,8 +199,11 @@ int wait(int *exitcode)
     auto this = thisproc();
     if(_empty_list(&this->children))
         return -1;
+    //等待子进程退出导致的信号量的改变，此时父进程为SLEEPING状态，并且处于调度队列
+    //如果考虑并发，可能会导致父进程被其他进程调度，此时如果子进程还未退出，会导致父进程无法wait
     wait_sem(&this->childexit);
     acquire_spinlock(&global_lock);
+    //遍历子进程，找到第一个僵尸进程，将其从父进程的children队列中删除，并且释放资源
     auto p = this->children.prev;
     while(p != &this->children){
         auto proc = container_of(p, struct Proc, ptnode);
@@ -229,18 +232,20 @@ NO_RETURN void exit(int code)
     // 2. clean up the resources
     // 3. transfer children to the root_proc, and notify the root_proc if there is zombie
     // 4. sched(ZOMBIE)
-    // NOTE: be careful of concurrency
+    // NOTE: be careful of concurrenc
+    //TODO clean up file resources
     if(debug_fyy)printk("exit\n");
     auto this = thisproc();
     this->exitcode = code;
-    //TODO clean up file resources
     acquire_spinlock(&global_lock);
     ListNode* pre = NULL;
+    //将子进程转移到root_proc
     _for_in_list(p, &this->children){
         if(pre != NULL && pre != &this->children){
             auto proc = container_of(pre, struct Proc, ptnode);
             proc->parent = &root_proc;
             auto t = &root_proc.children;
+            //如果子进程是僵尸进程，直接插入到root_proc的children队列中，并且通知root_proc
             if(is_zombie(proc)){
                 pre->prev = t->prev;
                 pre->next = t;
@@ -248,11 +253,13 @@ NO_RETURN void exit(int code)
                 t->prev = pre;
                 post_sem(&root_proc.childexit);
             }else{
+                //如果子进程不是僵尸进程，直接插入到root_proc的children队列中
                 _insert_into_list(t, pre);
             }
         }
         pre = p;
     }
+    //将自己从父进程的children队列中删除
     init_list_node(&this->children);
     pre = &this->ptnode;
     _detach_from_list(pre);
@@ -261,9 +268,12 @@ NO_RETURN void exit(int code)
     pre->next = t;
     t->prev->next = pre;
     t->prev = pre;
+    this->state = ZOMBIE;//防止并发，导致被其他进程调度导致父进程无法wait
+    //通知父进程
     post_sem(&this->parent->childexit);
     release_spinlock(&global_lock);
     acquire_sched_lock();
+    //调度
     sched(ZOMBIE);
     PANIC(); // prevent the warning of 'no_return function returns'
 }

@@ -64,9 +64,7 @@ void release_sched_lock()
 bool is_zombie(Proc *p)
 {
     bool r;
-    acquire_sched_lock();
     r = p->state == ZOMBIE;
-    release_sched_lock();
     return r;
 }
 
@@ -148,8 +146,11 @@ static void update_this_proc(Proc *p)
 void sched(enum procstate new_state)
 {
     if(debug_sched)printk("sched\n");
-
     auto this = thisproc();
+    if(this->state == ZOMBIE){
+        //防止因为并发导致 父进程wait时，子进程sched未被执行
+        this->state = RUNNING;
+    }
     ASSERT(this->state == RUNNING);
     update_this_state(new_state);
     auto next = pick_next();
