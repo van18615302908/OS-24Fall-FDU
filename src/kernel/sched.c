@@ -111,6 +111,7 @@ static Proc *pick_next()
     // choose the next process to run, and return idle if no runnable process
     if(debug_sched)printk("pick_next\n");
     acquire_spinlock(&rqlock);
+    //便利运行队列，找到下一个可运行的进程
     _for_in_list(p, &rq){
         if(p == &rq)
             continue;
@@ -155,19 +156,9 @@ void sched(enum procstate new_state)
     update_this_state(new_state);
     auto next = pick_next();
     update_this_proc(next);
-    // if(next->state != RUNNABLE && !next->idle){
-    //     printk("state = %d pid = %d idle = %d \n", next->state, next->pid, next->idle);
-    //     _for_in_list(p, &rq){
-    //         if(p == &rq)
-    //             continue;
-            
-    //         auto proc = container_of(p, struct Proc, schinfo.rq);
-    //         printk("state = %d pid = %d idle = %d \n", proc->state, proc->pid, proc->idle);
-    //     }
-
-    // }
     ASSERT(next->state == RUNNABLE);
     next->state = RUNNING;
+    //如果下一个进程不是当前进程，则切换上下文；（可能是idle进程）
     if (next->pid != this->pid) {
         if (debug_sched) {
             printk("switch %d -> %d\n", this->pid, next->pid);
