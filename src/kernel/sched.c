@@ -84,7 +84,8 @@ bool activate_proc(Proc *p)
         p->state = RUNNABLE;
         _insert_into_list(&rq, &p->schinfo.rq);
     }else{
-        PANIC();
+        // PANIC();
+        return false;
     }
     release_sched_lock();
     return true;
