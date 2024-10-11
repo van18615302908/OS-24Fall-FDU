@@ -77,10 +77,12 @@ bool activate_proc(Proc *p)
     // else: panic
     if(debug_sched)printk("activate_proc\n");
     acquire_sched_lock();
+    //如果进程已经是运行态或者可运行态，则不做任何操作
     if(p->state == RUNNING || p->state == RUNNABLE){
         release_sched_lock();
         return false;
     }else if(p->state == SLEEPING || p->state == UNUSED){
+        //如果进程是睡眠态或者未使用态，则将其设置为可运行态，并且加入到运行队列中
         p->state = RUNNABLE;
         _insert_into_list(&rq, &p->schinfo.rq);
     }else{

@@ -114,8 +114,6 @@ void init_kproc()
 
     // 初始化全局锁
     init_spinlock(&global_lock);
-
-
     init_proc(&root_proc);
     root_proc.parent = &root_proc;
     start_proc(&root_proc, kernel_entry, 123456);
