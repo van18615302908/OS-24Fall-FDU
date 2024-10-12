@@ -140,6 +140,7 @@ void init_proc(Proc *p)
     p->kstack = kalloc_page();
     p->ucontext = p->kstack + PAGE_SIZE - 16 - sizeof(UserContext);
     p->kcontext = p->kstack + PAGE_SIZE - 16 - sizeof(UserContext) - sizeof(KernelContext);
+    init_pgdir(&p->pgdir);
 }
 
 Proc *create_proc()
@@ -235,6 +236,7 @@ NO_RETURN void exit(int code)
     if(debug_fyy)printk("exit\n");
     auto this = thisproc();
     this->exitcode = code;
+    free_pgdir(&this->pgdir);
     acquire_spinlock(&global_lock);
     ListNode* pre = NULL;
     //将子进程转移到root_proc
