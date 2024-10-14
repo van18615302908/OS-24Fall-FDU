@@ -5,6 +5,7 @@
 #include <common/list.h>
 #include <common/string.h>
 #include <kernel/printk.h>
+#include <kernel/pid.h>
 
 Proc root_proc;
 
@@ -15,6 +16,36 @@ void proc_entry();
 static SpinLock global_lock;
 
 int debug_fyy = 0;
+
+
+static hash_map h;
+// define_early_init(init_hash){
+//     h = kalloc(sizeof(struct hash_map_));
+//     _hashmap_init(h);
+// }
+
+typedef struct hashpid
+{
+    int pid;
+    struct Proc* proc;
+    struct hash_node_ node;
+} hashpid_t;
+
+int hash(hash_node node){
+    return container_of(node, hashpid_t, node)->pid % HASHSIZE;
+}
+
+bool hashcmp(hash_node node1, hash_node node2){
+    return container_of(node1, hashpid_t, node)->pid == container_of(node2, hashpid_t, node)->pid;
+}
+
+
+
+
+
+
+
+
 
 //pidmap
 typedef struct pidmap
@@ -283,4 +314,16 @@ int kill(int pid)
     // TODO:
     // Set the killed flag of the proc to true and return 0.
     // Return -1 if the pid is invalid (proc not found).
+    acquire_spinlock(&global_lock);
+    auto p = _hashmap_lookup(&(hashpid_t){pid, NULL, {NULL}}.node, h, hash, hashcmp);
+    if(p != NULL){
+        auto proc = container_of(p, hashpid_t, node)->proc;
+        if(is_unused(proc)) return -1;
+        proc->killed = true;
+        activate_proc(proc);
+        release_spinlock(&global_lock);
+        return 0;
+    }
+    release_spinlock(&global_lock);
+    return -1;
 }

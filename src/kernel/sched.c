@@ -91,6 +91,15 @@ bool activate_proc(Proc *p)
     return true;
 }
 
+bool is_unused(struct Proc* p)
+{
+    bool r;
+    acquire_sched_lock();
+    r = p->state == UNUSED;
+    release_sched_lock();
+    return r;
+}
+
 static void update_this_state(enum procstate new_state)
 {
     // TODO: if you use template sched function, you should implement this routinue
@@ -154,6 +163,10 @@ void sched(enum procstate new_state)
         this->state = RUNNING;
     }
     ASSERT(this->state == RUNNING);
+    if(this->killed && new_state != ZOMBIE){
+        release_sched_lock();
+        return;
+    }
     update_this_state(new_state);
     auto next = pick_next();
     update_this_proc(next);
