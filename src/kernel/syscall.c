@@ -8,6 +8,7 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Woverride-init"
 
+int debug_syscall = 0;
 void *syscall_table[NR_SYSCALL] = {
     [0 ... NR_SYSCALL - 1] = NULL,
     [SYS_myreport] = (void *)syscall_myreport,
@@ -15,6 +16,7 @@ void *syscall_table[NR_SYSCALL] = {
 
 void syscall_entry(UserContext *context)
 {
+    if(debug_syscall)printk("syscall_entry\n");
     // TODO
     // Invoke syscall_table[id] with args and set the return value.
     // id is stored in x8. args are stored in x0-x5. return value is stored in x0.

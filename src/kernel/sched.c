@@ -10,7 +10,7 @@
 extern bool panic_flag;
 
 extern void swtch(KernelContext *new_ctx, KernelContext **old_ctx);
-int debug_sched = 0;
+int debug_sched = 1;
 
 static SpinLock sched_lock;
 static ListNode rq;
@@ -35,7 +35,7 @@ void init_sched()
 
 Proc *thisproc()
 {
-    if(debug_sched)printk("thisproc\n");
+    // if(debug_sched)printk("thisproc\n");
     // TODO: return the current process
     return cpus[cpuid()].sched.this_proc;
 }

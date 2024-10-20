@@ -15,7 +15,7 @@ void proc_entry();
 // 定义全局锁
 static SpinLock global_lock;
 
-int debug_fyy = 0;
+int debug_fyy = 1;
 
 
 static hash_map h;
@@ -125,7 +125,6 @@ static int alloc_pidmap()
 static void free_pidmap(int pid)
 {
     int offset = pid & BITS_PER_PAGE_MASK;
- 
     if(pid > 29)pidmap.nr_free++;
     clear_bit(offset,  &pidmap.page);
 }
@@ -268,6 +267,7 @@ NO_RETURN void exit(int code)
     auto this = thisproc();
     this->exitcode = code;
     free_pgdir(&this->pgdir);
+    printk("1\n");
     acquire_spinlock(&global_lock);
     ListNode* pre = NULL;
     //将子进程转移到root_proc
@@ -290,16 +290,20 @@ NO_RETURN void exit(int code)
         }
         pre = p;
     }
+    printk("2\n");
     //将自己从父进程的children队列中删除
     init_list_node(&this->children);
     pre = &this->ptnode;
+    printk("2.5\n");
     _detach_from_list(pre);
+    printk("3\n");
     auto t = &this->parent->children;
     pre->prev = t->prev;
     pre->next = t;
     t->prev->next = pre;
     t->prev = pre;
     this->state = ZOMBIE;//防止并发，导致被其他进程调度导致父进程无法wait
+    printk("4\n");
     //通知父进程
     post_sem(&this->parent->childexit);
     release_spinlock(&global_lock);
@@ -311,6 +315,7 @@ NO_RETURN void exit(int code)
 
 int kill(int pid)
 {
+    printk("kill %d\n",pid);
     // TODO:
     // Set the killed flag of the proc to true and return 0.
     // Return -1 if the pid is invalid (proc not found).
