@@ -10,7 +10,7 @@
 extern bool panic_flag;
 
 extern void swtch(KernelContext *new_ctx, KernelContext **old_ctx);
-int debug_sched = 1;
+int debug_sched = 0;
 
 static SpinLock sched_lock;
 static ListNode rq;
@@ -163,7 +163,19 @@ void sched(enum procstate new_state)
         this->state = RUNNING;
     }
     ASSERT(this->state == RUNNING);
-    if(this->killed && new_state != ZOMBIE){
+    if(debug_sched)printk("thisproc:pid = %d\n", this->pid);
+    if (debug_sched) {
+        printk("Current CPU %lld processes:\n", cpuid());
+        _for_in_list(p, &rq) {
+            // if (p == &rq)
+            //     continue;
+            auto proc = container_of(p, struct Proc, schinfo.rq);
+            printk("PID: %d, State: %d\n", proc->pid, proc->state);
+        }
+    }
+    //首次sched的时候，可能也符合条件 因此加上对pid的单独判断
+    if(this->killed && new_state != ZOMBIE && this->pid > 0){
+        if(debug_sched)printk("sched: exit\n");
         release_sched_lock();
         return;
     }
@@ -177,7 +189,7 @@ void sched(enum procstate new_state)
         if (debug_sched) {
             printk("switch %d -> %d\n", this->pid, next->pid);
         }
-
+        attach_pgdir(&next->pgdir);
         swtch(next->kcontext, &this->kcontext);
         if(debug_sched)printk("swtch done\n");
     }

@@ -77,7 +77,7 @@ void user_proc_test()
         // 2. set elr = EXTMEM
         // 3. set spsr = 0
         p->ucontext->x[0] = i;
-        p->ucontext->elr = 0x400000;
+        p->ucontext->elr = EXTMEM;
         p->ucontext->spsr = 0;
 
         pids[i] = start_proc(p, trap_return, 0);
