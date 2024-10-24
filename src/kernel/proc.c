@@ -100,16 +100,14 @@ static int find_next_zero_bit(void *addr, int size, int offset)
     return offset;
 }
 
-static int alloc_pidmap()
+static int alloc_pid()
 {
     int pid = last_pid + 1;
     int offset = pid & BITS_PER_PAGE_MASK;
-    
     if (!pidmap.nr_free)
     {
         return -1;
     }
- 
     offset = find_next_zero_bit(&pidmap.page, BITS_PER_PAGE, offset);
     if(offset == BITS_PER_PAGE) offset = find_next_zero_bit(&pidmap.page, offset-1, 30);
     if (BITS_PER_PAGE != offset && !test_and_set_bit(offset, &pidmap.page))
@@ -118,15 +116,29 @@ static int alloc_pidmap()
         last_pid = offset;
         return offset;
     }
- 
     return -1;
+}
+
+static int alloc_pidmap(struct Proc* p)
+{
+    int pid = alloc_pid();
+    if(pid == -1) return -1;
+    hashpid_t* hashpid = kalloc(sizeof(hashpid_t));
+    hashpid->pid = pid;
+    hashpid->proc = p;
+    hashmap_insert(&hashpid->node, h, hash);
+    return pid;
 }
 
 static void free_pidmap(int pid)
 {
     int offset = pid & BITS_PER_PAGE_MASK;
+ 
     if(pid > 29)pidmap.nr_free++;
-    clear_bit(offset,  &pidmap.page);
+    clear_bit(offset, &pidmap.page);
+    auto hashnode = hashmap_lookup(&(hashpid_t){pid, NULL, {NULL}}.node, h, hash, hashcmp);
+    hashmap_erase(hashnode, h, hash);
+    kfree(container_of(hashnode, hashpid_t, node));
 }
 
 
@@ -141,7 +153,8 @@ void init_kproc()
     // 1. init global resources (e.g. locks, semaphores)
     // 2. init the root_proc (finished)
     if(debug_fyy)printk("init_kproc on CPU %lld\n",cpuid());
-
+    h = kalloc(sizeof(struct hash_map_));
+    hashmap_init(h);
     // 初始化全局锁
     init_spinlock(&global_lock);
     init_proc(&root_proc);
@@ -159,7 +172,7 @@ void init_proc(Proc *p)
     p->killed = false;
     p->idle = false;
     acquire_spinlock(&global_lock);
-    p->pid = alloc_pidmap();
+    p->pid = alloc_pidmap(p);
     release_spinlock(&global_lock);
     p->state = UNUSED;
     init_sem(&(p->childexit),0);
@@ -267,7 +280,7 @@ NO_RETURN void exit(int code)
     auto this = thisproc();
     this->exitcode = code;
     free_pgdir(&this->pgdir);
-    // printk("1\n");
+
     acquire_spinlock(&global_lock);
     ListNode* pre = NULL;
     //将子进程转移到root_proc
@@ -316,11 +329,12 @@ NO_RETURN void exit(int code)
 int kill(int pid)
 {
     printk("kill on CPU %lld ,pid:%d\n",cpuid(),pid);
+    
     // TODO:
     // Set the killed flag of the proc to true and return 0.
     // Return -1 if the pid is invalid (proc not found).
     acquire_spinlock(&global_lock);
-    auto p = _hashmap_lookup(&(hashpid_t){pid, NULL, {NULL}}.node, h, hash, hashcmp);
+    auto p = hashmap_lookup(&(hashpid_t){pid, NULL, {NULL}}.node, h, hash, hashcmp);
     if(p != NULL){
         auto proc = container_of(p, hashpid_t, node)->proc;
         if(is_unused(proc)) return -1;

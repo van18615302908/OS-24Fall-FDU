@@ -1,11 +1,11 @@
 #include "pid.h"
 
-void _hashmap_init(hash_map map){
+void hashmap_init(hash_map map){
     for(int i=0; i<HASHSIZE; i++)
         map->bullet[i] = NULL;
 }
 
-int _hashmap_insert(hash_node node, hash_map map, int (*hash)(hash_node node)){
+int hashmap_insert(hash_node node, hash_map map, int (*hash)(hash_node node)){
     node->next = NULL;
     int b = hash(node);
     hash_node t = map->bullet[b];
@@ -21,7 +21,7 @@ int _hashmap_insert(hash_node node, hash_map map, int (*hash)(hash_node node)){
     return 0;
 }
 
-void _hashmap_erase(hash_node node, hash_map map, int (*hash)(hash_node node)){
+void hashmap_erase(hash_node node, hash_map map, int (*hash)(hash_node node)){
     int b = hash(node);
     hash_node pre = NULL;
     hash_node cur = map->bullet[b];
@@ -36,7 +36,7 @@ void _hashmap_erase(hash_node node, hash_map map, int (*hash)(hash_node node)){
     }
 }
 
-hash_node _hashmap_lookup(hash_node node, hash_map map, int (*hash)(hash_node node), bool (*hashcmp)(hash_node node1, hash_node node2)){
+hash_node hashmap_lookup(hash_node node, hash_map map, int (*hash)(hash_node node), bool (*hashcmp)(hash_node node1, hash_node node2)){
     int b = hash(node);
     hash_node cur = map->bullet[b];
     while(cur){

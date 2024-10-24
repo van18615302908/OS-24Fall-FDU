@@ -119,3 +119,23 @@ bool queue_empty(Queue *x)
 {
     return x->sz == 0;
 }
+
+// 将节点插入到链表的尾部
+void insert_at_tail(ListNode *head, ListNode *new_node) {
+    // 如果链表为空，直接返回新的节点作为头节点
+    if (!head) {
+        head = new_node;
+        return;
+    }
+
+    // 找到链表的尾节点
+    ListNode *tail = head;
+    while (tail->next != head) {
+        tail = tail->next;
+    }
+
+    // 将新节点插入到尾部
+    tail->next = new_node;
+    new_node->prev = tail;
+    new_node->next = head;  // 新的尾节点的next为head
+}

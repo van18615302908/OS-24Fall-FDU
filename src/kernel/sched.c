@@ -16,6 +16,20 @@ static SpinLock sched_lock;
 static ListNode rq;
 static SpinLock rqlock;
 
+struct timer sched_timer[4];//每个CPU维护一个定时器
+
+static void sched_handler(struct timer *timer)
+{
+    if(debug_sched)printk("sched_handler on CPU:%lld\n", cpuid());
+    if(!panic_flag){
+        acquire_sched_lock();
+        timer->triggered = false;
+        sched(RUNNABLE);
+    }
+}
+
+
+
 void init_sched()
 {
     // TODO: initialize the scheduler
@@ -31,6 +45,9 @@ void init_sched()
         p->killed = false;
         p->state = RUNNING;
         cpus[i].sched.this_proc = cpus[i].sched.idle = p;
+        sched_timer[i].triggered = false;
+        sched_timer[i].elapse = 10;
+        sched_timer[i].handler = sched_handler;
     }
 
 }
@@ -85,6 +102,7 @@ bool activate_proc(Proc *p)
     }else if(p->state == SLEEPING || p->state == UNUSED){
         p->state = RUNNABLE;
         _insert_into_list(&rq, &p->schinfo.rq);
+        // insert_at_tail(&rq, &p->schinfo.rq);
     }else{
         // PANIC();
         return false;
@@ -107,12 +125,12 @@ static void update_this_state(enum procstate new_state)
     // TODO: if you use template sched function, you should implement this routinue
     // update the state of current process to new_state, and modify the sched queue if necessary
     if(debug_sched)printk("update_this_state pid:%d (old) on cpu:%lld\n", thisproc()->pid,cpuid());
-
+    // printk("update_this_state pid:%d (old) to state:%d on cpu:%lld\n", thisproc()->pid,new_state,cpuid());
     thisproc()->state = new_state;
     if(debug_sched)printk("update_this_state pid:%d on CPU:%lld new_state = %d\n", thisproc()->pid,cpuid(),new_state);
     if(new_state == SLEEPING || new_state == ZOMBIE ){
         detach_from_list(&rqlock, &thisproc()->schinfo.rq);
-
+        // printk("detach_from_list on CPU%lld: pid = %d\n", cpuid(),thisproc()->pid);
     }
 }
 
@@ -123,7 +141,7 @@ static Proc *pick_next()
     acquire_spinlock(&rqlock);
     //便利运行队列，找到下一个可运行的进程
     _for_in_list(p, &rq){
-        if(p == &rq)
+        if(p == &rq || p == &thisproc()->schinfo.rq)
             continue;
         
         auto proc = container_of(p, struct Proc, schinfo.rq);
@@ -135,7 +153,8 @@ static Proc *pick_next()
     }
     //下一个lab可以设置一些更精妙的算法
     release_spinlock(&rqlock);
-    printk("（pick_next）No runnable process on CPU%lld\n", cpuid());
+    if(debug_sched) printk("（pick_next）No runnable process on CPU%lld\n", cpuid());
+    // printk("（pick_next）No runnable process on CPU%lld\n", cpuid());
     return cpus[cpuid()].sched.idle;
 }
 
@@ -149,6 +168,11 @@ static void update_this_proc(Proc *p)
     acquire_spinlock(&rqlock);
     cpus[cpuid()].sched.this_proc = p;  
     release_spinlock(&rqlock);
+    auto timer = &sched_timer[cpuid()];
+    if(!timer->triggered){
+        cancel_cpu_timer(timer);
+    }
+    set_cpu_timer(timer);
 
 }
 
@@ -168,8 +192,8 @@ void sched(enum procstate new_state)
     if (debug_sched) {
         printk("Current CPU %lld processes:\n", cpuid());
         _for_in_list(p, &rq) {
-            // if (p == &rq)
-            //     continue;
+            if (p == &rq)
+                continue;
             auto proc = container_of(p, struct Proc, schinfo.rq);
             printk("PID: %d, State: %d\n", proc->pid, proc->state);
         }
@@ -181,6 +205,11 @@ void sched(enum procstate new_state)
         return;
     }
     update_this_state(new_state);
+    if(new_state == RUNNABLE && this->pid > -1){//idle进程不加入队列
+        detach_from_list(&rqlock, &thisproc()->schinfo.rq);
+        insert_at_tail(&rq, &thisproc()->schinfo.rq);
+        // printk("insert_at_tail on CPU%lld: pid = %d\n", cpuid(),thisproc()->pid);
+    }
     auto next = pick_next();
     if(debug_sched)printk("pick_next on CPU %lld: pid = %d\n", cpuid(),next->pid);
     update_this_proc(next);
