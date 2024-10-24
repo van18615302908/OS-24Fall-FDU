@@ -176,7 +176,7 @@ static void update_this_proc(Proc *p)
 
 }
 
-// A simple scheduler.
+
 // You are allowed to replace it with whatever you like.
 // call with sched_lock
 void sched(enum procstate new_state)

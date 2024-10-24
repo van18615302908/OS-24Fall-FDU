@@ -17,130 +17,9 @@ static SpinLock global_lock;
 
 int debug_fyy = 0;
 
-
 static hash_map h;
-// define_early_init(init_hash){
-//     h = kalloc(sizeof(struct hash_map_));
-//     _hashmap_init(h);
-// }
-
-typedef struct hashpid
-{
-    int pid;
-    struct Proc* proc;
-    struct hash_node_ node;
-} hashpid_t;
-
-int hash(hash_node node){
-    return container_of(node, hashpid_t, node)->pid % HASHSIZE;
-}
-
-bool hashcmp(hash_node node1, hash_node node2){
-    return container_of(node1, hashpid_t, node)->pid == container_of(node2, hashpid_t, node)->pid;
-}
-
-
-
-
-
-
-
-
-
-//pidmap
-typedef struct pidmap
-{
-    unsigned int nr_free;
-    char page[4096];
-} pidmap_t;
-
-#define PID_MAX_DEFAULT 0x8000
-#define BITS_PER_BYTE 8
-#define BITS_PER_PAGE (PAGE_SIZE * BITS_PER_BYTE)
-#define BITS_PER_PAGE_MASK (BITS_PER_PAGE - 1)
-static pidmap_t pidmap = { PID_MAX_DEFAULT, {0}};
-static int last_pid = -1;
-
-static int test_and_set_bit(int offset, void *addr)
-{
-    unsigned long mask = 1UL << (offset & (sizeof(unsigned long) * BITS_PER_BYTE - 1));
-    unsigned long *p = ((unsigned long*)addr) + (offset >> (sizeof(unsigned long) + 1));
-    unsigned long old = *p;
- 
-    *p = old | mask;
- 
-    return (old & mask) != 0;
-}
-
-static void clear_bit(int offset, void *addr)
-{
-    unsigned long mask = 1UL << (offset & (sizeof(unsigned long) * BITS_PER_BYTE - 1));
-    unsigned long *p = ((unsigned long*)addr) + (offset >> (sizeof(unsigned long) + 1));
-    unsigned long old = *p;
-    *p = old & ~mask;
-}
-
-static int find_next_zero_bit(void *addr, int size, int offset)
-{
-    unsigned long *p;
-    unsigned long mask;
- 
-    while (offset < size)
-    {
-        p = ((unsigned long*)addr) + (offset >> (sizeof(unsigned long) + 1));
-        mask = 1UL << (offset & (sizeof(unsigned long) * BITS_PER_BYTE - 1));
- 
-        if ((~(*p) & mask))
-        {
-            break;
-        }
-        ++offset;
-    }
- 
-    return offset;
-}
-
-static int alloc_pid()
-{
-    int pid = last_pid + 1;
-    int offset = pid & BITS_PER_PAGE_MASK;
-    if (!pidmap.nr_free)
-    {
-        return -1;
-    }
-    offset = find_next_zero_bit(&pidmap.page, BITS_PER_PAGE, offset);
-    if(offset == BITS_PER_PAGE) offset = find_next_zero_bit(&pidmap.page, offset-1, 30);
-    if (BITS_PER_PAGE != offset && !test_and_set_bit(offset, &pidmap.page))
-    {
-        --pidmap.nr_free;
-        last_pid = offset;
-        return offset;
-    }
-    return -1;
-}
-
-static int alloc_pidmap(struct Proc* p)
-{
-    int pid = alloc_pid();
-    if(pid == -1) return -1;
-    hashpid_t* hashpid = kalloc(sizeof(hashpid_t));
-    hashpid->pid = pid;
-    hashpid->proc = p;
-    hashmap_insert(&hashpid->node, h, hash);
-    return pid;
-}
-
-static void free_pidmap(int pid)
-{
-    int offset = pid & BITS_PER_PAGE_MASK;
- 
-    if(pid > 29)pidmap.nr_free++;
-    clear_bit(offset, &pidmap.page);
-    auto hashnode = hashmap_lookup(&(hashpid_t){pid, NULL, {NULL}}.node, h, hash, hashcmp);
-    hashmap_erase(hashnode, h, hash);
-    kfree(container_of(hashnode, hashpid_t, node));
-}
-
+pidmap_t pidmap = { PID_MAX_DEFAULT, {0}};
+int last_pid = -1;
 
 
 
@@ -168,11 +47,10 @@ void init_proc(Proc *p)
     // setup the Proc with kstack and pid allocated
     // NOTE: be careful of concurrency
     if(debug_fyy)printk("init_proc on CPU %lld\n",cpuid());
-
     p->killed = false;
     p->idle = false;
     acquire_spinlock(&global_lock);
-    p->pid = alloc_pidmap(p);
+    p->pid = alloc_pidmap(p, &last_pid, &pidmap, &h);
     release_spinlock(&global_lock);
     p->state = UNUSED;
     init_sem(&(p->childexit),0);
@@ -255,7 +133,7 @@ int wait(int *exitcode)
             _detach_from_list(p);
             kfree_page(proc->kstack);
             kfree(proc);
-            free_pidmap(id);
+            free_pidmap(id, &pidmap, &h);
             release_spinlock(&global_lock);
             return id;
         }
