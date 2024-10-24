@@ -34,7 +34,7 @@ void trap_global_handler(UserContext *context)
     case ESR_EC_DABORT_EL0:
     case ESR_EC_DABORT_EL1: {
         // printk("Page fault\n");
-        printk("Page fault, DFSC:%llx\n", iss);
+        printk("Page fault on CPU:%lld, DFSC:%llx\n",  cpuid(),iss& 0x1F);
         
         PANIC();
     } break;

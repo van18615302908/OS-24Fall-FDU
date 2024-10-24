@@ -66,7 +66,7 @@ void init_pgdir(struct pgdir *pgdir)
 
 void free_pgdir(struct pgdir *pgdir)
 {
-    if(debug_pt)printk("free_pgdir\n");
+    if(debug_pt)printk("free_pgdir on CPU %lld\n",cpuid());
     // TODO:
     // Free pages used by the page table. If pgdir->pt=NULL, do nothing.
     // DONT FREE PAGES DESCRIBED BY THE PAGE TABLE

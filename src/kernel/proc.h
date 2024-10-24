@@ -6,7 +6,7 @@
 #include <common/rbtree.h>
 #include <kernel/pt.h>
 
-enum procstate { UNUSED, RUNNABLE, RUNNING, SLEEPING, ZOMBIE };
+enum procstate { UNUSED, RUNNABLE, RUNNING, SLEEPING, ZOMBIE };//从0开始
 
 typedef struct UserContext {
     // TODO: customize your trap frame

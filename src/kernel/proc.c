@@ -140,7 +140,7 @@ void init_kproc()
     // TODO:
     // 1. init global resources (e.g. locks, semaphores)
     // 2. init the root_proc (finished)
-    if(debug_fyy)printk("init_kproc\n");
+    if(debug_fyy)printk("init_kproc on CPU %lld\n",cpuid());
 
     // 初始化全局锁
     init_spinlock(&global_lock);
@@ -154,7 +154,7 @@ void init_proc(Proc *p)
     // TODO:
     // setup the Proc with kstack and pid allocated
     // NOTE: be careful of concurrency
-    if(debug_fyy)printk("init_proc\n");
+    if(debug_fyy)printk("init_proc on CPU %lld\n",cpuid());
 
     p->killed = false;
     p->idle = false;
@@ -175,7 +175,7 @@ void init_proc(Proc *p)
 
 Proc *create_proc()
 {
-    if(debug_fyy)printk("create_proc\n");
+    if(debug_fyy)printk("create_proc on CPU %lld\n",cpuid());
     Proc *p = kalloc(sizeof(Proc));
     init_proc(p);
     return p;
@@ -201,7 +201,7 @@ int start_proc(Proc *p, void (*entry)(u64), u64 arg)
     // 2. setup the kcontext to make the proc start with proc_entry(entry, arg)
     // 3. activate the proc and return its pid
     // NOTE: be careful of concurrency
-    if(debug_fyy)printk("start_proc\n");
+    if(debug_fyy)printk("start_proc on CPU %lld\n",cpuid());
     if(p->parent == NULL){
         acquire_spinlock(&global_lock);
         p->parent = &root_proc;
@@ -223,7 +223,7 @@ int wait(int *exitcode)
     // 2. wait for childexit
     // 3. if any child exits, clean it up and return its pid and exitcode
     // NOTE: be careful of concurrency
-    if(debug_fyy)printk("wait\n");
+    if(debug_fyy)printk("wait on CPU %lld\n",cpuid());
 
     auto this = thisproc();
     if(_empty_list(&this->children))
@@ -263,11 +263,11 @@ NO_RETURN void exit(int code)
     // 4. sched(ZOMBIE)
     // NOTE: be careful of concurrenc
     //TODO clean up file resources
-    if(debug_fyy)printk("exit\n");
+    if(debug_fyy)printk("exit on CPU %lld\n",cpuid());
     auto this = thisproc();
     this->exitcode = code;
     free_pgdir(&this->pgdir);
-    printk("1\n");
+    // printk("1\n");
     acquire_spinlock(&global_lock);
     ListNode* pre = NULL;
     //将子进程转移到root_proc
@@ -290,13 +290,13 @@ NO_RETURN void exit(int code)
         }
         pre = p;
     }
-    printk("2\n");
+    // printk("2\n");
     //将自己从父进程的children队列中删除
     init_list_node(&this->children);
     pre = &this->ptnode;
-    printk("2.5\n");
+    printk("2.5 on CPU %lld\n",cpuid());
     _detach_from_list(pre);
-    printk("3\n");
+    printk("3 on CPU %lld\n",cpuid());
     auto t = &this->parent->children;
     pre->prev = t->prev;
     pre->next = t;
@@ -315,7 +315,7 @@ NO_RETURN void exit(int code)
 
 int kill(int pid)
 {
-    printk("kill %d\n",pid);
+    printk("kill on CPU %lld ,pid:%d\n",cpuid(),pid);
     // TODO:
     // Set the killed flag of the proc to true and return 0.
     // Return -1 if the pid is invalid (proc not found).
