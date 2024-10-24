@@ -15,7 +15,7 @@ void proc_entry();
 // 定义全局锁
 static SpinLock global_lock;
 
-int debug_fyy = 1;
+int debug_fyy = 0;
 
 
 static hash_map h;

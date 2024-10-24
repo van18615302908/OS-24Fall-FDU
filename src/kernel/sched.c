@@ -10,7 +10,7 @@
 extern bool panic_flag;
 
 extern void swtch(KernelContext *new_ctx, KernelContext **old_ctx);
-int debug_sched = 1;
+int debug_sched = 0;
 
 static SpinLock sched_lock;
 static ListNode rq;
@@ -127,7 +127,7 @@ static Proc *pick_next()
             continue;
         
         auto proc = container_of(p, struct Proc, schinfo.rq);
-        if(proc->state == RUNNABLE && proc->pid > 0){
+        if(proc->state == RUNNABLE && proc->pid > -1){
             release_spinlock(&rqlock);
             if(debug_sched)printk("pick_next on CPU%lld: pid = %d\n", cpuid(),proc->pid);
             return proc;
