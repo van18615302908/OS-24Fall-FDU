@@ -4,7 +4,7 @@
 #include <aarch64/intrinsic.h>
 #include <kernel/printk.h>
 
-int debug_pt = 1;
+int debug_pt = 0;
 PTEntriesPtr get_pte(struct pgdir *pgdir, u64 va, bool alloc)
 {
     // if(debug_pt)printk("get_pte\n");
