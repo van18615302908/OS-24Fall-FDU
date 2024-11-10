@@ -77,3 +77,4 @@ void queue_push(Queue *x, ListNode *item);
 void queue_pop(Queue *x);
 ListNode *queue_front(Queue *x);
 bool queue_empty(Queue *x);
+void insert_at_tail(ListNode *head, ListNode *new_node);

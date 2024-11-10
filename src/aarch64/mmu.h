@@ -55,9 +55,9 @@ typedef unsigned long long u64;
 // conver any address into physical address space.
 #define PSPACE(addr) ((u64)(addr) & (~KSPACE_MASK))
 
-typedef u64 PTEntry;
-typedef PTEntry PTEntries[N_PTE_PER_TABLE];
-typedef PTEntry *PTEntriesPtr;
+typedef u64 PTEntry;//页表中的每一项
+typedef PTEntry PTEntries[N_PTE_PER_TABLE];//一个页表
+typedef PTEntry *PTEntriesPtr;//指向页表的指针
 
 #define VA_OFFSET(va) ((u64)(va) & 0xFFF)
 #define PTE_ADDRESS(pte) ((pte) & ~0xFFFF000000000FFF)
