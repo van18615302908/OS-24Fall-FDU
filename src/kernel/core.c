@@ -42,7 +42,7 @@ NO_RETURN void kernel_entry()
     u32 second_partition_lba = *(u32 *)(mbr_data + 0x1CE + 0x8);  // 第二分区起始 LBA
     u32 second_partition_size = *(u32 *)(mbr_data + 0x1CE + 0xC); // 第二分区大小
 
-    printk("Second partition LBA: %u\n", second_partition_lba);
+    printk("Second partition LBA: %u\n", second_partition_lba);//防止warning
     printk("Second partition size: %u blocks\n", second_partition_size);   
     /* LAB 4 TODO 3 END */
 
