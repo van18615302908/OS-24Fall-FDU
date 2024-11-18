@@ -134,6 +134,34 @@ bool _activate_proc(Proc *p, bool onalert)
     // if the proc->state is RUNNING/RUNNABLE, do nothing and return false
     // if the proc->state is SLEEPING/UNUSED, set the process state to RUNNABLE, add it to the sched queue, and return true
     // if the proc->state is DEEPSLEEPING, do nothing if onalert or activate it if else, and return the corresponding value.
+    
+    // 如果进程已经是 RUNNING 或 RUNNABLE 状态，直接返回 false
+    if (p->state == RUNNING || p->state == RUNNABLE) {
+        return false;
+    }
+    
+    // 如果进程处于 SLEEPING 或 UNUSED 状态，将其标记为 RUNNABLE，并加入调度队列
+    if (p->state == SLEEPING || p->state == UNUSED) {
+        p->state = RUNNABLE;
+        _insert_into_list(&rq, &p->schinfo.rq);  // 将进程加入调度队列
+        return true;
+    }
+    
+    // 如果进程处于 DEEPSLEEPING 状态，需要根据 onalert 判断是否唤醒
+    if (p->state == DEEPSLEEPING) {
+        if (onalert) {
+            // 主动唤醒请求，无效，直接返回 false
+            return false;
+        } else {
+            // 被动唤醒，将其标记为 RUNNABLE，并加入调度队列
+            p->state = RUNNABLE;
+            _insert_into_list(&rq, &p->schinfo.rq);
+            return true;
+        }
+    }
+    
+    // 如果是其他状态，返回 false，表示无法激活
+    return false;
 }
 
 static void update_this_state(enum procstate new_state)
