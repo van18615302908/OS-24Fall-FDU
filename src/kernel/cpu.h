@@ -3,11 +3,17 @@
 #include <kernel/proc.h>
 #include <common/rbtree.h>
 
+
 #define NCPU 4
 
 struct sched {
     // TODO: customize your sched info
+    struct Proc* this_proc;
+    struct Proc* idle;
 };
+
+
+
 
 struct cpu {
     bool online;

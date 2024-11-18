@@ -4,7 +4,7 @@
 
 struct pgdir {
     PTEntriesPtr pt;
-};
+};//表示页表目录的结构体
 
 void init_pgdir(struct pgdir *pgdir);
 WARN_RESULT PTEntriesPtr get_pte(struct pgdir *pgdir, u64 va, bool alloc);
