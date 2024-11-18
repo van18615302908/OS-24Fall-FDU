@@ -6,6 +6,14 @@
 #include <kernel/cpu.h>
 #include <common/rbtree.h>
 #include <driver/timer.h>
+#include <kernel/proc.h>
+#include <kernel/proc.h>
+#include <kernel/mem.h>
+#include <kernel/printk.h>
+#include <aarch64/intrinsic.h>
+#include <kernel/cpu.h>
+#include <common/rbtree.h>
+#include <driver/timer.h>
 
 extern bool panic_flag;
 
@@ -88,7 +96,7 @@ bool is_zombie(Proc *p)
 }
 
 
-bool activate_proc(Proc *p)
+bool activate_proc_my(Proc *p)
 {
     // TODO:
     // if the proc->state is RUNNING/RUNNABLE, do nothing

@@ -103,7 +103,7 @@ int start_proc(Proc *p, void (*entry)(u64), u64 arg)
     p->kcontext->x0 = (u64)entry;
     p->kcontext->x1 = (u64)arg;
     int id = p->pid;
-    activate_proc(p);
+    activate_proc_my(p);
     return id;
 }
 
@@ -217,7 +217,7 @@ int kill(int pid)
         auto proc = container_of(p, hashpid_t, node)->proc;
         if(is_unused(proc)) return -1;
         proc->killed = true;
-        activate_proc(proc);
+        activate_proc_my(proc);
         release_spinlock(&global_lock);
         return 0;
     }

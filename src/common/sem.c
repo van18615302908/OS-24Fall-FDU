@@ -91,6 +91,6 @@ void _post_sem(Semaphore *sem)
         auto wait = container_of(sem->sleeplist.prev, WaitData, slnode);
         wait->up = true;
         _detach_from_list(&wait->slnode);
-        activate_proc(wait->proc);
+        activate_proc_my(wait->proc);
     }
 }
