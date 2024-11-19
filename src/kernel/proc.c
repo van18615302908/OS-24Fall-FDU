@@ -121,7 +121,8 @@ int wait(int *exitcode)
         return -1;
     //等待子进程退出导致的信号量的改变，此时父进程为SLEEPING状态，并且处于调度队列
     //如果考虑并发，可能会导致父进程被其他进程调度，此时如果子进程还未退出，会导致父进程无法wait
-    wait_sem(&this->childexit);
+    int ret = wait_sem(&this->childexit);
+    if(ret == 0) return -1;//若起返回为false后，不应当继续wait，应当立即返回（返回一个布尔值 false 表示当前进程未被唤醒，而是因为其他信号（例如进程被kill）而中断了等待状态
     acquire_spinlock(&global_lock);
     //遍历子进程，找到第一个僵尸进程，将其从父进程的children队列中删除，并且释放资源
     auto p = this->children.prev;
@@ -217,7 +218,9 @@ int kill(int pid)
         auto proc = container_of(p, hashpid_t, node)->proc;
         if(is_unused(proc)) return -1;
         proc->killed = true;
-        activate_proc(proc);
+        // activate_proc(proc);
+        alert_proc(proc);//lab5进行修改
+        //尝试以一种“安全”方式来唤醒进程。这意味着如果进程在 DEEPSLEEPING 中，系统默认不打断它。
         release_spinlock(&global_lock);
         return 0;
     }
