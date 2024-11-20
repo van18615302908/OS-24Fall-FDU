@@ -129,7 +129,6 @@ static usize get_num_cached_blocks() {
 // see `cache.h`.
 static Block *cache_acquire(usize block_no) {
     // TODO
-    start:
     acquire_spinlock(&lock);
 
     _for_in_list(p, &head){
@@ -137,21 +136,25 @@ static Block *cache_acquire(usize block_no) {
         if(p == &head) continue;
         Block* b = container_of(p, Block, node);
         if(b->block_no == block_no){
+            while(b->acquired) {
+                release_spinlock(&lock);
+                unalertable_wait_sem(&b->lock);
+                acquire_spinlock(&lock);
+                if (get_sem(&b->lock)) {
+                    b->acquired = true;
+                    break;
+                }
+            }
             if(!b->acquired){
                 //如果块没有被获取，那么获取它
                 get_sem(&b->lock);
-                //获取块的睡眠锁
-                _detach_from_list(p);
-                _insert_into_list(&head, p);
                 b->acquired = true;
-                release_spinlock(&lock);
-                return b;
-            }else{//如果块已经被获取
-                release_spinlock(&lock);
-                //等待该块的睡眠锁被释放（即等待其他线程完成对该块的操作）
-                unalertable_wait_sem(&b->lock);
-                goto start;
+
             }
+            _detach_from_list(p);
+            _insert_into_list(&head, p);
+            release_spinlock(&lock);
+            return b;
         }
     }
     // 如果缓存块数量超出阈值，执行块驱逐操作
@@ -363,8 +366,10 @@ static usize cache_alloc(OpContext *ctx) {
         // 遍历位图块中的每一位
         for(u32 j = 0; j < BIT_PER_BLOCK; j++){
             // 检查是否超出数据块范围
-            if(i * BIT_PER_BLOCK + j >= sblock->num_data_blocks)
-                break;
+            if(i * BIT_PER_BLOCK + j >= sblock->num_blocks){
+                cache_release(b);
+                PANIC();
+            }
 
             // 如果找到空闲位
             if(!bitmap_get(bm, j)){

@@ -19,6 +19,7 @@ ListNode *_merge_list(ListNode *node1, ListNode *node2);
 // - syntax sugar: insert a single new node into the list
 #define _insert_into_list(list, node) \
     (init_list_node(node), _merge_list(list, node))
+    //插入到链表的头部
 // - remove `node` from the list, and then `node` becomes a single
 // node list. It usually returns `node->prev`. If `node` is
 // the last one in the list, it will return NULL.
