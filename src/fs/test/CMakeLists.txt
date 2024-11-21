@@ -6,7 +6,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS True)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
-
+set(CMAKE_BUILD_TYPE Debug)
+set(CMAKE_CXX_FLAGS   "-no-pie")  
+set(CMAKE_C_FLAGS   "-no-pie")  
 include_directories(../..)
 
 set(compiler_warnings "-Wall -Wextra")

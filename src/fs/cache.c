@@ -4,7 +4,7 @@
 #include <kernel/mem.h>
 #include <kernel/printk.h>
 #include <kernel/proc.h>
-
+int debug_cache = 0;
 /**
     @brief the private reference to the super block.
 
@@ -68,6 +68,8 @@ struct {
     bool committing;//是否正在commit
 } log;
 
+// SpinLock head_lock;
+
 // read the content from disk.
 static INLINE void device_read(Block *block) {
     device->read(block->block_no, block->data);
@@ -92,6 +94,9 @@ static INLINE void write_header() {
 
 // initialize a block struct.
 static void init_block(Block *block) {
+    // if(debug_cache){
+    //     printk("init_block\n");
+    // }
     // 初始化块号为 0。块号用于标识块在磁盘中的位置。
     // 在实际使用前，块号会被设置为正确的值。
     block->block_no = 0;
@@ -129,14 +134,17 @@ static usize get_num_cached_blocks() {
 // see `cache.h`.
 static Block *cache_acquire(usize block_no) {
     // TODO
+    if(debug_cache){
+        printk("cache_acquire 编号：%llu\n", block_no);
+    }
     acquire_spinlock(&lock);
 
     _for_in_list(p, &head){
         //遍历块缓存链表
         if(p == &head) continue;
         Block* b = container_of(p, Block, node);
-        if(b->block_no == block_no){
-            while(b->acquired) {
+        while(b->block_no == block_no){
+            if(b->acquired) {
                 release_spinlock(&lock);
                 unalertable_wait_sem(&b->lock);
                 acquire_spinlock(&lock);
@@ -147,9 +155,8 @@ static Block *cache_acquire(usize block_no) {
             }
             if(!b->acquired){
                 //如果块没有被获取，那么获取它
-                get_sem(&b->lock);
+                get_sem(&b->lock);//get_sem只有lock为正数才会减少信号量
                 b->acquired = true;
-
             }
             _detach_from_list(p);
             _insert_into_list(&head, p);
@@ -162,13 +169,19 @@ static Block *cache_acquire(usize block_no) {
     usize cnum = get_num_cached_blocks();
     if(cnum >= EVICTION_THRESHOLD){
         ListNode* p = head.prev;//找到链表的尾部
-        while(p != &head && cnum >= EVICTION_THRESHOLD){
+
+        while(p != &head && cnum >= EVICTION_THRESHOLD && p->next != p){
             Block* b = container_of(p, Block, node);
-            if(!b->pinned && !b->acquired){
+            if(!b->pinned && !b->acquired ){
                 //如果该块未被固定且未被获取，则可以安全地驱逐
-                p = _detach_from_list(p);
+                if(debug_cache){
+                    printk("驱逐块 编号：%llu\n", b->block_no);
+                    // printk("驱逐块_next 编号：%llu\n", b_next->block_no);
+                    // printk("驱逐块_prev 编号：%llu\n", b_prev->block_no);
+                }
+                _detach_from_list(p);
                 kfree(b);
-                cnum--;
+                cnum = get_num_cached_blocks();
             }else{
                 //否则继续遍历
                 p = p->prev;
@@ -177,22 +190,30 @@ static Block *cache_acquire(usize block_no) {
     }
      // 分配一个新的块，并初始化它
     Block* block = kalloc(sizeof(Block));
+    if(debug_cache){
+        printk("分配块 编号：%llu\n", block_no);
+    }
     init_block(block);
     block->block_no = block_no;
     block->valid = true;
     block->acquired = true;
     _insert_into_list(&head, &block->node);
-    //等待块的睡眠锁，确保独占访问该块
-    unalertable_wait_sem(&block->lock);
-    release_spinlock(&lock);
+
+    // unalertable_wait_sem(&block->lock);
+
     device_read(block);
+    release_spinlock(&lock);
     return block;
 }
 
 
 // see `cache.h`.
 static void cache_release(Block *block) {
+    if(debug_cache){
+        printk("cache_release 编号：%llu\n", block->block_no);
+    }
     // TODO
+    // ASSERT(block->acquired);
     acquire_spinlock(&lock);
     block->acquired = false;
     post_sem(&block->lock);
@@ -201,8 +222,11 @@ static void cache_release(Block *block) {
 }
 
 
-//
+
 static void log_wb(){
+    if(debug_cache){
+        printk("log_wb\n");
+    }
     for(usize i = 0; i < header.num_blocks; i++){
         Block* logb = cache_acquire(sblock->log_start + i + 1);
         Block* sdb = cache_acquire(header.block_no[i]);
@@ -218,6 +242,9 @@ static void log_wb(){
 
 // see `cache.h`.
 void init_bcache(const SuperBlock *_sblock, const BlockDevice *_device) {
+    if(debug_cache){
+        printk("init_bcache\n");
+    }
     sblock = _sblock;
     device = _device;
 
@@ -242,6 +269,9 @@ void init_bcache(const SuperBlock *_sblock, const BlockDevice *_device) {
 
 // see `cache.h`.
 static void cache_begin_op(OpContext *ctx) {
+    if(debug_cache){
+        printk("cache_begin_op\n");
+    }
     // TODO
     acquire_spinlock(&log.lock);
     //等待日志操作完成
@@ -295,6 +325,9 @@ static void cache_sync(OpContext *ctx, Block *block) {
 
 // see `cache.h`.
 static void cache_end_op(OpContext* ctx) {
+    if(debug_cache){
+        printk("cache_end_op\n");
+    }
     acquire_spinlock(&log.lock);
 
     // 释放当前操作占用的日志空间
@@ -354,6 +387,9 @@ static void cache_end_op(OpContext* ctx) {
 
 // see `cache.h`.
 static usize cache_alloc(OpContext *ctx) {
+    if(debug_cache){
+        printk("cache_alloc\n");
+    }
     // 计算位图块的数量
     usize num_bitmap_blocks = (sblock->num_data_blocks + BIT_PER_BLOCK - 1) / BIT_PER_BLOCK;
     //向上取整，以确保能为所有数据块分配足够的位图块
@@ -405,6 +441,9 @@ static usize cache_alloc(OpContext *ctx) {
 
 // see `cache.h`.
 static void cache_free(OpContext *ctx, usize block_no) {
+    if(debug_cache){
+        printk("cache_free\n");
+    }
     // TODO
     Block* b = cache_acquire(sblock->bitmap_start + block_no / BIT_PER_BLOCK);
     BitmapCell* bm = (BitmapCell*)b->data;

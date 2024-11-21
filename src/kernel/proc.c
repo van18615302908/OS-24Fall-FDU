@@ -15,7 +15,7 @@ void proc_entry();
 // 定义全局锁
 static SpinLock global_lock;
 
-int debug_fyy = 0;
+int debug_fyy = 1;
 
 static hash_map h;
 pidmap_t pidmap = { PID_MAX_DEFAULT, {0}};
@@ -103,7 +103,7 @@ int start_proc(Proc *p, void (*entry)(u64), u64 arg)
     p->kcontext->x0 = (u64)entry;
     p->kcontext->x1 = (u64)arg;
     int id = p->pid;
-    activate_proc(p);
+    activate_proc_my(p);
     return id;
 }
 
