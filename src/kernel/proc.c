@@ -185,16 +185,16 @@ NO_RETURN void exit(int code)
     //将自己从父进程的children队列中删除
     init_list_node(&this->children);
     pre = &this->ptnode;
-    printk("2.5 on CPU %lld\n",cpuid());
+    // printk("2.5 on CPU %lld\n",cpuid());
     _detach_from_list(pre);
-    printk("3 on CPU %lld\n",cpuid());
+    // printk("3 on CPU %lld\n",cpuid());
     auto t = &this->parent->children;
     pre->prev = t->prev;
     pre->next = t;
     t->prev->next = pre;
     t->prev = pre;
     this->state = ZOMBIE;//防止并发，导致被其他进程调度导致父进程无法wait
-    printk("4\n");
+    // printk("4\n");
     //通知父进程
     post_sem(&this->parent->childexit);
     release_spinlock(&global_lock);

@@ -129,6 +129,10 @@ static void update_this_state(enum procstate new_state)
     thisproc()->state = new_state;
     if(debug_sched)printk("update_this_state pid:%d on CPU:%lld new_state = %d\n", thisproc()->pid,cpuid(),new_state);
     if(new_state == SLEEPING || new_state == ZOMBIE ){
+        if(thisproc()->pid  <0){
+            // detach_from_list(&rqlock, &thisproc()->schinfo.rq);
+            printk("detach_from_list on CPU%lld: pid = %d\n", cpuid(),thisproc()->pid);
+        }
         detach_from_list(&rqlock, &thisproc()->schinfo.rq);
         // printk("detach_from_list on CPU%lld: pid = %d\n", cpuid(),thisproc()->pid);
     }
