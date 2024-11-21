@@ -159,7 +159,7 @@ bool _activate_proc(Proc *p, bool onalert)
             // 被动唤醒，将其标记为 RUNNABLE，并加入调度队列
             p->state = RUNNABLE;
             _insert_into_list(&rq, &p->schinfo.rq);
-             release_sched_lock();
+            release_sched_lock();
             return true;
         }
     }
@@ -195,16 +195,13 @@ static Proc *pick_next()
         // printk("pick_next 检验pid：%d\n", proc->pid);
         if(p == &rq || p == &thisproc()->schinfo.rq){
             p = p->next;
-            // if(p->next == p){
-            //     printk("自环！！！！！！！\n");
-            // }
+            if(p->next == p){
+                printk("%d\n",proc->pid);
+                printk("自环！！！！！！！\n");
+            }
             continue;
         }
 
-        
-        // if(p->next == p){
-        //     printk("自环！！！！！！！\n");
-        // }
         
         if(proc->state == RUNNABLE && proc->pid > -1){
             release_spinlock(&rqlock);
@@ -251,15 +248,15 @@ void sched(enum procstate new_state)
     }
     ASSERT(this->state == RUNNING);
     if(debug_sched)printk("(shed)thisproc on CPU %lld:pid = %d\n",cpuid(), this->pid);
-    // if (debug_sched) {
-    //     printk("Current CPU %lld processes\n", cpuid());
-    //     _for_in_list(p, &rq) {
-    //         if (p == &rq)
-    //             continue;
-    //         auto proc = container_of(p, struct Proc, schinfo.rq);
-    //         printk("pid = %d, state = %d\n", proc->pid, proc->state);
-    //     }
-    // }
+    if (debug_sched) {
+        printk("Current CPU %lld processes\n", cpuid());
+        _for_in_list(p, &rq) {
+            if (p == &rq)
+                continue;
+            auto proc = container_of(p, struct Proc, schinfo.rq);
+            printk("pid = %d, state = %d\n", proc->pid, proc->state);
+        }
+    }
     //首次sched的时候，可能也符合条件 因此加上对pid的单独判断
     if(this->killed && new_state != ZOMBIE && this->pid > 0){
         if(debug_sched)printk("sched on CPU %lld: done\n", cpuid());

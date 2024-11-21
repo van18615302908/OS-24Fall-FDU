@@ -34,8 +34,8 @@ typedef struct Proc {
     int exitcode;
     enum procstate state;
     Semaphore childexit;
-    ListNode children;
-    ListNode ptnode;
+    ListNode children;//子进程
+    ListNode ptnode;//当前进程
     struct Proc *parent;
     struct schinfo schinfo;
     struct pgdir pgdir;

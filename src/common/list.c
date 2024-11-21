@@ -130,9 +130,6 @@ void insert_at_tail(ListNode *head, ListNode *new_node) {
 
     // 找到链表的尾节点
     ListNode *tail = head->prev;
-    // while (tail->next != head) {
-    //     tail = tail->next;
-    // }
 
     // 将新节点插入到尾部
     tail->next = new_node;
