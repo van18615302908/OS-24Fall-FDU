@@ -15,7 +15,7 @@ void proc_entry();
 // 定义全局锁
 static SpinLock global_lock;
 
-int debug_fyy = 0;
+int debug_fyy = 1;
 
 static hash_map h;
 pidmap_t pidmap = { PID_MAX_DEFAULT, {0}};
@@ -81,7 +81,9 @@ void set_parent_to_this(Proc *proc)
     ASSERT(proc->parent == NULL);
     acquire_spinlock(&global_lock);
     proc->parent = thisproc();
+    _detach_from_list(&proc->ptnode);
     _insert_into_list(&thisproc()->children, &proc->ptnode);
+    if(debug_fyy)printk("set_parent_to_this on CPU %lld,proc:%d,parent:%d\n",cpuid(),proc->pid,proc->parent->pid);
     release_spinlock(&global_lock);
 }
 
@@ -96,7 +98,9 @@ int start_proc(Proc *p, void (*entry)(u64), u64 arg)
     if(p->parent == NULL){
         acquire_spinlock(&global_lock);
         p->parent = &root_proc;
+        _detach_from_list(&p->ptnode);
         _insert_into_list(&root_proc.children, &p->ptnode);
+        printk("start_proc on CPU %lld,proc:%d,parent:%d\n",cpuid(),p->pid,p->parent->pid);
         release_spinlock(&global_lock);
     }
     p->kcontext->lr = (u64)&proc_entry;
@@ -114,20 +118,24 @@ int wait(int *exitcode)
     // 2. wait for childexit
     // 3. if any child exits, clean it up and return its pid and exitcode
     // NOTE: be careful of concurrency
-    if(debug_fyy)printk("wait on CPU %lld\n",cpuid());
 
     auto this = thisproc();
+    if(debug_fyy)printk("wait on CPU %lld,pid:%d\n",cpuid(),this->pid);
     if(_empty_list(&this->children))
         return -1;
     //等待子进程退出导致的信号量的改变，此时父进程为SLEEPING状态，并且处于调度队列
     //如果考虑并发，可能会导致父进程被其他进程调度，此时如果子进程还未退出，会导致父进程无法wait
     ASSERT(wait_sem(&this->childexit));
+
     acquire_spinlock(&global_lock);
     //遍历子进程，找到第一个僵尸进程，将其从父进程的children队列中删除，并且释放资源
     auto p = this->children.prev;
+    
     while(p != &this->children){
         auto proc = container_of(p, struct Proc, ptnode);
+        // printk("wait on CPU %lld,（判断）proc:%d,state:%d,父进程：%d\n" ,cpuid(),proc->pid,proc->state,proc->parent->pid);
         if(is_zombie(proc)){
+            // printk("找到了！！！！！！！！！！！！！！");
             *exitcode = proc->exitcode;
             int id = proc->pid;
             _detach_from_list(p);
@@ -139,7 +147,8 @@ int wait(int *exitcode)
         }
         p = p->prev;
     }
-    printk("error in proc %d \n",this->state);
+
+    printk("error(wait) in proc %d ,CPU: %lld\n,childexit:%d",this->pid,cpuid(),this->childexit.val);
     PANIC();
     release_spinlock(&global_lock);
     return -1;
@@ -154,59 +163,55 @@ NO_RETURN void exit(int code)
     // 4. sched(ZOMBIE)
     // NOTE: be careful of concurrenc
     //TODO clean up file resources
-    if(debug_fyy)printk("exit on CPU %lld\n",cpuid());
+
     auto this = thisproc();
+    if(debug_fyy)printk("exit on CPU %lld,pid:%d\n",cpuid(),this->pid);
     this->exitcode = code;
     free_pgdir(&this->pgdir);
 
     acquire_spinlock(&global_lock);
-    ListNode* pre = NULL;
+    ListNode* pre = this->children.next;
     //将子进程转移到root_proc
-    _for_in_list(p, &this->children){
-        if(pre != NULL && pre != &this->children){
-            auto proc = container_of(pre, struct Proc, ptnode);
-            proc->parent = &root_proc;
-            auto t = &root_proc.children;
-            //如果子进程是僵尸进程，直接插入到root_proc的children队列中，并且通知root_proc
-            if(is_zombie(proc)){
-                pre->prev = t->prev;
-                pre->next = t;
-                t->prev->next = pre;
-                t->prev = pre;
-                post_sem(&root_proc.childexit);
-            }else{
-                //如果子进程不是僵尸进程，直接插入到root_proc的children队列中
-                _insert_into_list(t, pre);
-            }
+    while(pre != &this->children){
+        ListNode* p = pre;
+        auto proc = container_of(p, struct Proc, ptnode);
+        proc->parent = &root_proc;
+        auto t = &root_proc.children;
+        if(debug_fyy)printk("exit on CPU %lld,thisproc:%d,proc(检验):%d\n",cpuid(),thisproc()->pid,proc->pid);
+        //如果子进程是僵尸进程，直接插入到root_proc的children队列中，并且通知root_proc
+        if(is_zombie(proc)){
+            _detach_from_list(p);
+            _insert_into_list(t, p);
+            post_sem(&root_proc.childexit);
+            // printk("通知根进程！！！！！！！！！exit on CPU %lld,（子进程）proc:%d\n",cpuid(),proc->pid);
+        }else{
+            //如果子进程不是僵尸进程，直接插入到root_proc的children队列中
+            _detach_from_list(p);
+            _insert_into_list(t, p);
         }
-        pre = p;
+        pre =  this->children.next;
+        // auto proc_ = container_of(pre, struct Proc, ptnode);
+        // printk("exit on CPU %lld,proc:%d,state:%d,父进程：%d\n" ,cpuid(),proc_->pid,proc_->state,proc_->parent->pid);
     }
-    // printk("2\n");
-    //将自己从父进程的children队列中删除
-    init_list_node(&this->children);
-    pre = &this->ptnode;
 
-    _detach_from_list(pre);
 
-    auto t = &this->parent->children;
-    pre->prev = t->prev;
-    pre->next = t;
-    t->prev->next = pre;
-    t->prev = pre;
     this->state = ZOMBIE;//防止并发，导致被其他进程调度导致父进程无法wait
 
     //通知父进程
     post_sem(&this->parent->childexit);
+    // printk("通知！！！！！！！！！exit on CPU %lld,(本进程：%d 状态：%d)（父进程）proc:%d\n",cpuid(),this->pid,this->state,this->parent->pid);
     release_spinlock(&global_lock);
     acquire_sched_lock();
     //调度
+    if(debug_fyy)printk("（exit）调用sched");
     sched(ZOMBIE);
+    printk("erro(shed)) in proc %d ,CPU:%lld\n",this->state,cpuid());
     PANIC(); // prevent the warning of 'no_return function returns'
 }
 
 int kill(int pid)
 {
-    printk("kill on CPU %lld ,pid:%d\n",cpuid(),pid);
+    // printk("kill on CPU %lld ,pid:%d\n",cpuid(),pid);
     
     // TODO:
     // Set the killed flag of the proc to true and return 0.

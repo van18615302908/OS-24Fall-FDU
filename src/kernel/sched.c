@@ -10,7 +10,7 @@
 extern bool panic_flag;
 
 extern void swtch(KernelContext *new_ctx, KernelContext **old_ctx);
-int debug_sched = 1;
+int debug_sched = 0;
 
 static SpinLock sched_lock;
 static ListNode rq;
@@ -104,6 +104,7 @@ bool _activate_proc(Proc *p, bool onalert)
     // 如果进程处于 SLEEPING 或 UNUSED 状态，将其标记为 RUNNABLE，并加入调度队列
     if (p->state == SLEEPING || p->state == UNUSED) {
         p->state = RUNNABLE;
+        _detach_from_list(&p->schinfo.rq);  // 从调度队列中删除
         _insert_into_list(&rq, &p->schinfo.rq);  // 将进程加入调度队列
         release_spinlock(&rqlock);
         return true;
@@ -119,6 +120,7 @@ bool _activate_proc(Proc *p, bool onalert)
         } else {
             // 被动唤醒，将其标记为 RUNNABLE，并加入调度队列
             p->state = RUNNABLE;
+            _detach_from_list(&p->schinfo.rq);
             _insert_into_list(&rq, &p->schinfo.rq);
             release_spinlock(&rqlock);
             return true;
@@ -150,11 +152,8 @@ static void update_this_state(enum procstate new_state)
     if(debug_sched)printk("update_this_state pid:%d on CPU:%lld new_state = %d\n", thisproc()->pid,cpuid(),new_state);
     if(new_state != RUNNABLE && thisproc()->pid > -1){
         acquire_spinlock(&rqlock);
-        // printk("锁获取成功\n");
         _detach_from_list( &thisproc()->schinfo.rq);
-        // printk("detach_from_list on CPU%lld: pid = %d\n", cpuid(),thisproc()->pid);
         release_spinlock(&rqlock);
-        // printk("锁释放成功\n");
     }
 }
 
@@ -170,6 +169,7 @@ static Proc *pick_next()
         
         auto proc = container_of(p, struct Proc, schinfo.rq);
         if(proc->state == RUNNABLE && proc->pid > -1){
+            _detach_from_list( &proc->schinfo.rq);
             release_spinlock(&rqlock);
             if(debug_sched)printk("pick_next on CPU%lld: pid = %d\n", cpuid(),proc->pid);
             return proc;
@@ -187,7 +187,7 @@ static void update_this_proc(Proc *p)
     // TODO: you should implement this routinue
     // update thisproc to the choosen process
 
-    if(debug_sched)printk("update_this_proc(old) on CPU%lld :pid = %d\n",cpuid(), thisproc()->pid);
+    if(debug_sched)printk("update_this_proc(old) on CPU:%lld :pid = %d\n",cpuid(), thisproc()->pid);
     // timer_init(1000);
     cpus[cpuid()].sched.this_proc = p;  
     auto timer = &sched_timer[cpuid()];
@@ -206,11 +206,12 @@ void sched(enum procstate new_state)
     if(debug_sched)printk("sched  on CPU %lld\n", cpuid());
     auto this = thisproc();
 
-    if(this->state == ZOMBIE){
-        //防止因为并发导致 父进程wait时，子进程sched未被执行
-        this->state = RUNNING;
-    }
-    ASSERT(this->state == RUNNING);
+    // if(this->state == ZOMBIE){
+    //     //防止因为并发导致 父进程wait时，子进程sched未被执行
+    //     this->state = RUNNING;
+    // }
+    // ASSERT(this->state == RUNNING);
+
     if(debug_sched)printk("(shed)thisproc on CPU %lld:pid = %d\n",cpuid(), this->pid);
     if (debug_sched) {
         acquire_spinlock(&rqlock);
@@ -223,12 +224,13 @@ void sched(enum procstate new_state)
                 // PANIC();
             }
             auto proc = container_of(p, struct Proc, schinfo.rq);
+
             printk("PID: %d, State: %d\n", proc->pid, proc->state);
         }
         release_spinlock(&rqlock);
     }
     //首次sched的时候，可能也符合条件 因此加上对pid的单独判断
-    if(this->killed && new_state != ZOMBIE && this->pid > 0){
+    if(this->killed && new_state != ZOMBIE && this->pid >= 0){
         if(debug_sched)printk("sched on CPU %lld: done\n", cpuid());
         release_spinlock(&rqlock);
         release_sched_lock();
@@ -239,7 +241,7 @@ void sched(enum procstate new_state)
     if(new_state == RUNNABLE && this->pid > -1){//idle进程不加入队列
         acquire_spinlock(&rqlock);
         _detach_from_list( &thisproc()->schinfo.rq);
-        insert_at_tail(&rq, &thisproc()->schinfo.rq);
+        _insert_into_list(&rq, &thisproc()->schinfo.rq);
         release_spinlock(&rqlock);
         // printk("insert_at_tail on CPU%lld: pid = %d\n", cpuid(),thisproc()->pid);
     }
@@ -248,6 +250,7 @@ void sched(enum procstate new_state)
     update_this_proc(next);
     ASSERT(next->state == RUNNABLE);
     next->state = RUNNING;
+
     //如果下一个进程不是当前进程，则切换上下文；（可能是idle进程）
     if (next->pid != this->pid) {
         if (debug_sched) {
