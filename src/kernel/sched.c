@@ -6,19 +6,11 @@
 #include <kernel/cpu.h>
 #include <common/rbtree.h>
 #include <driver/timer.h>
-#include <kernel/proc.h>
-#include <kernel/proc.h>
-#include <kernel/mem.h>
-#include <kernel/printk.h>
-#include <aarch64/intrinsic.h>
-#include <kernel/cpu.h>
-#include <common/rbtree.h>
-#include <driver/timer.h>
 
 extern bool panic_flag;
 
 extern void swtch(KernelContext *new_ctx, KernelContext **old_ctx);
-int debug_sched = 0;
+int debug_sched = 1;
 
 static SpinLock sched_lock;
 static ListNode rq;
@@ -96,37 +88,6 @@ bool is_zombie(Proc *p)
 }
 
 
-bool activate_proc_my(Proc *p)
-{
-    // TODO:
-    // if the proc->state is RUNNING/RUNNABLE, do nothing
-    // if the proc->state if SLEEPING/UNUSED, set the process state to RUNNABLE and add it to the sched queue
-    // else: panic
-    if(debug_sched)printk("activate_proc on CPU:%lld\n", cpuid());
-    acquire_sched_lock();
-    if(p->state == RUNNING || p->state == RUNNABLE){
-        release_sched_lock();
-        return false;
-    }else if(p->state == SLEEPING || p->state == UNUSED){
-        p->state = RUNNABLE;
-        _insert_into_list(&rq, &p->schinfo.rq);
-    }else{
-        // PANIC();
-        return false;
-    }
-    release_sched_lock();
-    return true;
-}
-
-bool is_unused(struct Proc* p)
-{
-    bool r;
-    acquire_sched_lock();
-    r = p->state == UNUSED;
-    release_sched_lock();
-    return r;
-}
-
 bool _activate_proc(Proc *p, bool onalert)
 {
     // TODO:(Lab5 new)
@@ -169,46 +130,46 @@ bool _activate_proc(Proc *p, bool onalert)
     return false;
 }
 
+
+bool is_unused(struct Proc* p)
+{
+    bool r;
+    acquire_sched_lock();
+    r = p->state == UNUSED;
+    release_sched_lock();
+    return r;
+}
+
 static void update_this_state(enum procstate new_state)
 {
     // TODO: if you use template sched function, you should implement this routinue
     // update the state of current process to new_state, and modify the sched queue if necessary
-    if(debug_sched)printk("update_this_state pid:%d (old) on cpu:%lld,oldstate :%d\n", thisproc()->pid,cpuid(),thisproc()->state);
+    if(debug_sched)printk("update_this_state pid:%d (old) on cpu:%lld\n", thisproc()->pid,cpuid());
+    // printk("update_this_state pid:%d (old) to state:%d on cpu:%lld\n", thisproc()->pid,new_state,cpuid());
     thisproc()->state = new_state;
     if(debug_sched)printk("update_this_state pid:%d on CPU:%lld new_state = %d\n", thisproc()->pid,cpuid(),new_state);
-    if(new_state != RUNNABLE){
+    if(new_state != RUNNABLE && thisproc()->pid > -1){
         detach_from_list(&rqlock, &thisproc()->schinfo.rq);
+        // printk("detach_from_list on CPU%lld: pid = %d\n", cpuid(),thisproc()->pid);
     }
 }
 
 static Proc *pick_next()
 {
-
     // TODO: if using template sched function, you should implement this routinue
     // choose the next process to run, and return idle if no runnable process
     acquire_spinlock(&rqlock);
     //便利运行队列，找到下一个可运行的进程
-
-    ListNode *p = rq.next;
-    while(p!=&rq){
-        auto proc = container_of(p, struct Proc, schinfo.rq);
-        // printk("pick_next 检验pid：%d\n", proc->pid);
-        if(p == &rq || p == &thisproc()->schinfo.rq){
-            p = p->next;
-            if(p->next == p){
-                printk("%d\n",proc->pid);
-                printk("自环！！！！！！！\n");
-            }
+    _for_in_list(p, &rq){
+        if(p == &rq || p == &thisproc()->schinfo.rq)
             continue;
-        }
-
         
+        auto proc = container_of(p, struct Proc, schinfo.rq);
         if(proc->state == RUNNABLE && proc->pid > -1){
             release_spinlock(&rqlock);
             if(debug_sched)printk("pick_next on CPU%lld: pid = %d\n", cpuid(),proc->pid);
             return proc;
         }
-        p = p->next;
     }
     //下一个lab可以设置一些更精妙的算法
     release_spinlock(&rqlock);
@@ -249,12 +210,16 @@ void sched(enum procstate new_state)
     ASSERT(this->state == RUNNING);
     if(debug_sched)printk("(shed)thisproc on CPU %lld:pid = %d\n",cpuid(), this->pid);
     if (debug_sched) {
-        printk("Current CPU %lld processes\n", cpuid());
+        printk("Current CPU %lld processes:\n", cpuid());
         _for_in_list(p, &rq) {
             if (p == &rq)
-                continue;
+                break;
+            if(p->next == p){
+                printk("error\n");
+                // PANIC();
+            }
             auto proc = container_of(p, struct Proc, schinfo.rq);
-            printk("pid = %d, state = %d\n", proc->pid, proc->state);
+            printk("PID: %d, State: %d\n", proc->pid, proc->state);
         }
     }
     //首次sched的时候，可能也符合条件 因此加上对pid的单独判断

@@ -77,12 +77,10 @@ void set_parent_to_this(Proc *proc)
     // TODO: set the parent of proc to thisproc
     // NOTE: maybe you need to lock the process tree
     // NOTE: it's ensured that the old proc->parent = NULL
-    if(debug_fyy)    printk("set_parent_to_this %d -> %d's child\n",proc->pid,thisproc()->pid);
-
+    if(debug_fyy)printk("set_parent_to_this\n");
     ASSERT(proc->parent == NULL);
     acquire_spinlock(&global_lock);
     proc->parent = thisproc();
-    _detach_from_list(&proc->ptnode);
     _insert_into_list(&thisproc()->children, &proc->ptnode);
     release_spinlock(&global_lock);
 }
@@ -123,8 +121,7 @@ int wait(int *exitcode)
         return -1;
     //等待子进程退出导致的信号量的改变，此时父进程为SLEEPING状态，并且处于调度队列
     //如果考虑并发，可能会导致父进程被其他进程调度，此时如果子进程还未退出，会导致父进程无法wait
-    int ret = wait_sem(&this->childexit);
-    if(ret == 0) printk("-1") ;//若起返回为false后，不应当继续wait，应当立即返回（返回一个布尔值 false 表示当前进程未被唤醒，而是因为其他信号（例如进程被kill）而中断了等待状态
+    ASSERT(wait_sem(&this->childexit));
     acquire_spinlock(&global_lock);
     //遍历子进程，找到第一个僵尸进程，将其从父进程的children队列中删除，并且释放资源
     auto p = this->children.prev;
@@ -157,58 +154,48 @@ NO_RETURN void exit(int code)
     // 4. sched(ZOMBIE)
     // NOTE: be careful of concurrenc
     //TODO clean up file resources
-    
+    if(debug_fyy)printk("exit on CPU %lld\n",cpuid());
     auto this = thisproc();
-    if(this->pid == 0){
-        printk("exit on CPU %lld,pid:%d\n",cpuid(),this->pid);
-        PANIC();
-    }
-    if(debug_fyy)printk("exit on CPU %lld,pid:%d\n",cpuid(),this->pid);
     this->exitcode = code;
     free_pgdir(&this->pgdir);
 
     acquire_spinlock(&global_lock);
-    // printk("0\n");
+    ListNode* pre = NULL;
     //将子进程转移到root_proc
-    int i = 0;
-    ListNode *temp = this->children.next;
-    while(temp != &this->children){
-        if(temp == &this->children) break;
-        ListNode *p = temp;
-        temp = temp->next;
-        if(temp->next == temp){
-            
-            i++;
-            if(i <= 10){
-                printk("自旋!!!!!!!!!!!!!\n");
-                printk("root_proc pid:%d\n",root_proc.pid);
+    _for_in_list(p, &this->children){
+        if(pre != NULL && pre != &this->children){
+            auto proc = container_of(pre, struct Proc, ptnode);
+            proc->parent = &root_proc;
+            auto t = &root_proc.children;
+            //如果子进程是僵尸进程，直接插入到root_proc的children队列中，并且通知root_proc
+            if(is_zombie(proc)){
+                pre->prev = t->prev;
+                pre->next = t;
+                t->prev->next = pre;
+                t->prev = pre;
+                post_sem(&root_proc.childexit);
+            }else{
+                //如果子进程不是僵尸进程，直接插入到root_proc的children队列中
+                _insert_into_list(t, pre);
             }
-
         }
-        auto proc = container_of(p, struct Proc, ptnode);
-        proc->parent = &root_proc;
-        // printk("(exit)转移子进程pid:%d\n",proc->pid);
-        auto t = &root_proc.children;
-        //如果子进程是僵尸进程，直接插入到root_proc的children队列中，并且通知root_proc
-        if(is_zombie(proc)){
-            insert_at_tail(t, p);
-            post_sem(&root_proc.childexit);
-        }else{
-            //如果子进程不是僵尸进程，直接插入到root_proc的children队列中
-            _insert_into_list(t, p);
-        }
-
+        pre = p;
     }
-    // printk("1\n");
-    //将自己从父进程的children队列中删除,这一步由于在wait中已经完成，因此这里不需要再次删除
-    _detach_from_list(&this->ptnode);
-    insert_at_tail(&this->parent->children,&this->ptnode);
+    // printk("2\n");
+    //将自己从父进程的children队列中删除
+    init_list_node(&this->children);
+    pre = &this->ptnode;
 
+    _detach_from_list(pre);
+
+    auto t = &this->parent->children;
+    pre->prev = t->prev;
+    pre->next = t;
+    t->prev->next = pre;
+    t->prev = pre;
     this->state = ZOMBIE;//防止并发，导致被其他进程调度导致父进程无法wait
+
     //通知父进程
-    if(debug_fyy){
-        printk("exit on CPU %lld,post_sem pid:%d\n",cpuid(),this->parent->pid);
-    }
     post_sem(&this->parent->childexit);
     release_spinlock(&global_lock);
     acquire_sched_lock();
@@ -230,9 +217,7 @@ int kill(int pid)
         auto proc = container_of(p, hashpid_t, node)->proc;
         if(is_unused(proc)) return -1;
         proc->killed = true;
-        // activate_proc(proc);
-        alert_proc(proc);//lab5进行修改
-        //尝试以一种“安全”方式来唤醒进程。这意味着如果进程在 DEEPSLEEPING 中，系统默认不打断它。
+        alert_proc(proc);
         release_spinlock(&global_lock);
         return 0;
     }
