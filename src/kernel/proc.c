@@ -185,9 +185,7 @@ NO_RETURN void exit(int code)
     //将自己从父进程的children队列中删除
     init_list_node(&this->children);
     pre = &this->ptnode;
-    printk("2.5 on CPU %lld\n",cpuid());
     _detach_from_list(pre);
-    printk("3 on CPU %lld\n",cpuid());
     auto t = &this->parent->children;
     pre->prev = t->prev;
     pre->next = t;
