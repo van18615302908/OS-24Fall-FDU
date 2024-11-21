@@ -15,7 +15,7 @@ void proc_entry();
 // 定义全局锁
 static SpinLock global_lock;
 
-int debug_fyy = 1;
+int debug_fyy = 0;
 
 static hash_map h;
 pidmap_t pidmap = { PID_MAX_DEFAULT, {0}};
@@ -103,7 +103,7 @@ int start_proc(Proc *p, void (*entry)(u64), u64 arg)
     p->kcontext->x0 = (u64)entry;
     p->kcontext->x1 = (u64)arg;
     int id = p->pid;
-    activate_proc_my(p);
+    activate_proc(p);
     return id;
 }
 
@@ -122,7 +122,7 @@ int wait(int *exitcode)
     //等待子进程退出导致的信号量的改变，此时父进程为SLEEPING状态，并且处于调度队列
     //如果考虑并发，可能会导致父进程被其他进程调度，此时如果子进程还未退出，会导致父进程无法wait
     int ret = wait_sem(&this->childexit);
-    if(ret == 0) return -1;//若起返回为false后，不应当继续wait，应当立即返回（返回一个布尔值 false 表示当前进程未被唤醒，而是因为其他信号（例如进程被kill）而中断了等待状态
+    if(ret == 0) printk("-1") ;//若起返回为false后，不应当继续wait，应当立即返回（返回一个布尔值 false 表示当前进程未被唤醒，而是因为其他信号（例如进程被kill）而中断了等待状态
     acquire_spinlock(&global_lock);
     //遍历子进程，找到第一个僵尸进程，将其从父进程的children队列中删除，并且释放资源
     auto p = this->children.prev;
