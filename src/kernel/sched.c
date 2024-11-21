@@ -94,10 +94,10 @@ bool _activate_proc(Proc *p, bool onalert)
     // if the proc->state is RUNNING/RUNNABLE, do nothing and return false
     // if the proc->state is SLEEPING/UNUSED, set the process state to RUNNABLE, add it to the sched queue, and return true
     // if the proc->state is DEEPSLEEPING, do nothing if onalert or activate it if else, and return the corresponding value.
-    acquire_sched_lock();
+    acquire_spinlock(&rqlock);
     // 如果进程已经是 RUNNING 或 RUNNABLE 状态，直接返回 false
     if (p->state == RUNNING || p->state == RUNNABLE) {
-        release_sched_lock();
+        release_spinlock(&rqlock);
         return false;
     }
     
@@ -105,7 +105,7 @@ bool _activate_proc(Proc *p, bool onalert)
     if (p->state == SLEEPING || p->state == UNUSED) {
         p->state = RUNNABLE;
         _insert_into_list(&rq, &p->schinfo.rq);  // 将进程加入调度队列
-        release_sched_lock();
+        release_spinlock(&rqlock);
         return true;
     }
     
@@ -114,19 +114,19 @@ bool _activate_proc(Proc *p, bool onalert)
 
         if (onalert) {
             // 主动唤醒请求，无效，直接返回 false
-            release_sched_lock();
+            release_spinlock(&rqlock);
             return false;
         } else {
             // 被动唤醒，将其标记为 RUNNABLE，并加入调度队列
             p->state = RUNNABLE;
             _insert_into_list(&rq, &p->schinfo.rq);
-            release_sched_lock();
+            release_spinlock(&rqlock);
             return true;
         }
     }
     
     // 如果是其他状态
-    release_sched_lock();
+    release_spinlock(&rqlock);
     return false;
 }
 
@@ -149,8 +149,12 @@ static void update_this_state(enum procstate new_state)
     thisproc()->state = new_state;
     if(debug_sched)printk("update_this_state pid:%d on CPU:%lld new_state = %d\n", thisproc()->pid,cpuid(),new_state);
     if(new_state != RUNNABLE && thisproc()->pid > -1){
-        detach_from_list(&rqlock, &thisproc()->schinfo.rq);
+        acquire_spinlock(&rqlock);
+        // printk("锁获取成功\n");
+        _detach_from_list( &thisproc()->schinfo.rq);
         // printk("detach_from_list on CPU%lld: pid = %d\n", cpuid(),thisproc()->pid);
+        release_spinlock(&rqlock);
+        // printk("锁释放成功\n");
     }
 }
 
@@ -185,9 +189,7 @@ static void update_this_proc(Proc *p)
 
     if(debug_sched)printk("update_this_proc(old) on CPU%lld :pid = %d\n",cpuid(), thisproc()->pid);
     // timer_init(1000);
-    acquire_spinlock(&rqlock);
     cpus[cpuid()].sched.this_proc = p;  
-    release_spinlock(&rqlock);
     auto timer = &sched_timer[cpuid()];
     if(!timer->triggered){
         cancel_cpu_timer(timer);
@@ -203,6 +205,7 @@ void sched(enum procstate new_state)
 {
     if(debug_sched)printk("sched  on CPU %lld\n", cpuid());
     auto this = thisproc();
+
     if(this->state == ZOMBIE){
         //防止因为并发导致 父进程wait时，子进程sched未被执行
         this->state = RUNNING;
@@ -210,6 +213,7 @@ void sched(enum procstate new_state)
     ASSERT(this->state == RUNNING);
     if(debug_sched)printk("(shed)thisproc on CPU %lld:pid = %d\n",cpuid(), this->pid);
     if (debug_sched) {
+        acquire_spinlock(&rqlock);
         printk("Current CPU %lld processes:\n", cpuid());
         _for_in_list(p, &rq) {
             if (p == &rq)
@@ -221,17 +225,22 @@ void sched(enum procstate new_state)
             auto proc = container_of(p, struct Proc, schinfo.rq);
             printk("PID: %d, State: %d\n", proc->pid, proc->state);
         }
+        release_spinlock(&rqlock);
     }
     //首次sched的时候，可能也符合条件 因此加上对pid的单独判断
     if(this->killed && new_state != ZOMBIE && this->pid > 0){
         if(debug_sched)printk("sched on CPU %lld: done\n", cpuid());
+        release_spinlock(&rqlock);
         release_sched_lock();
         return;
     }
+
     update_this_state(new_state);
     if(new_state == RUNNABLE && this->pid > -1){//idle进程不加入队列
-        detach_from_list(&rqlock, &thisproc()->schinfo.rq);
+        acquire_spinlock(&rqlock);
+        _detach_from_list( &thisproc()->schinfo.rq);
         insert_at_tail(&rq, &thisproc()->schinfo.rq);
+        release_spinlock(&rqlock);
         // printk("insert_at_tail on CPU%lld: pid = %d\n", cpuid(),thisproc()->pid);
     }
     auto next = pick_next();
