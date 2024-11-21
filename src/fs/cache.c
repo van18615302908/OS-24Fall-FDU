@@ -274,11 +274,11 @@ static void cache_begin_op(OpContext *ctx) {
     }
     // TODO
     acquire_spinlock(&log.lock);
-    //等待日志操作完成
+
     while(log.log_used + OP_MAX_NUM_BLOCKS > log.log_size || log.committing){
         _lock_sem(&log.begin);
         release_spinlock(&log.lock);
-        //等待日志操作完成
+        //等待日志能够进行写入
         ASSERT(_wait_sem(&log.begin, false));
         acquire_spinlock(&log.lock);
     }
@@ -336,6 +336,15 @@ static void cache_end_op(OpContext* ctx) {
 
     log.outstanding--;
 
+    if(log.outstanding > 0){
+        // 如果还有其他未完成的事务，允许其他线程继续操作日志
+        post_all_sem(&log.begin);
+
+        // 等待日志提交完成
+        _lock_sem(&log.end);
+        release_spinlock(&log.lock);
+        ASSERT(_wait_sem(&log.end, false));
+    }
     // 如果没有其他未完成的日志操作，准备提交日志
     if(log.outstanding == 0){
         log.committing = true;
@@ -374,15 +383,7 @@ static void cache_end_op(OpContext* ctx) {
 
         // 释放自旋锁
         release_spinlock(&log.lock);
-    } else {
-        // 如果还有其他未完成的事务，允许其他线程继续操作日志
-        post_all_sem(&log.begin);
-
-        // 等待日志提交完成
-        _lock_sem(&log.end);
-        release_spinlock(&log.lock);
-        ASSERT(_wait_sem(&log.end, false));
-    }
+    } 
 }
 
 // see `cache.h`.
