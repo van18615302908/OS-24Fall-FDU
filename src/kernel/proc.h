@@ -24,7 +24,6 @@ typedef struct KernelContext {
 // embeded data for procs
 typedef struct schinfo {
     // TODO: customize your sched info
-    ListNode rq;//运行队列
     ListNode node;
 } Schinfo;
 
