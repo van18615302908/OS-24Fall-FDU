@@ -139,3 +139,10 @@ void insert_at_tail(ListNode *head, ListNode *new_node) {
     new_node->prev = tail;
     new_node->next = head;  // 新的尾节点的next为head
 }
+void insert_into_list_lockfree(ListNode *list, ListNode *node)
+{
+    node->next = list->next;
+    node->prev = list;
+    node->next->prev = node;
+    list->next = node;
+}

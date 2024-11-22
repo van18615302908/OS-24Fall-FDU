@@ -25,6 +25,7 @@ typedef struct KernelContext {
 typedef struct schinfo {
     // TODO: customize your sched info
     ListNode rq;//运行队列
+    ListNode node;
 } Schinfo;
 
 typedef struct Proc {
@@ -35,6 +36,7 @@ typedef struct Proc {
     enum procstate state;
     Semaphore childexit;
     ListNode children;
+    ListNode zombie_children;
     ListNode ptnode;
     struct Proc *parent;
     struct schinfo schinfo;
