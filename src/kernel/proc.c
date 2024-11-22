@@ -192,7 +192,7 @@ NO_RETURN void exit(int code)
     t->prev->next = pre;
     t->prev = pre;
     this->state = ZOMBIE;//防止并发，导致被其他进程调度导致父进程无法wait
-    printk("4\n");
+    // printk("4\n");
     //通知父进程
     post_sem(&this->parent->childexit);
     release_spinlock(&global_lock);
