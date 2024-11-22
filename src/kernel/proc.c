@@ -8,7 +8,7 @@
 #include <kernel/pid.h>
 
 Proc root_proc;
-int debug_proc = 1;
+int debug_proc = 0;
 
 static SpinLock global_process_lock;
 void kernel_entry();
@@ -173,10 +173,10 @@ NO_RETURN void exit(int code)
     }
 
     if (!_empty_list(&current->children)) {
-        PANIC();
-        // insert_list_into_list_lockfree(current->children.next,
-        //                                current->children.prev,
-        //                                &root_proc.children);
+        // PANIC();
+        insert_list_into_list_lockfree(current->children.next,
+                                       current->children.prev,
+                                       &root_proc.children);
     }
 
     for (ListNode *p = current->zombie_children.next,

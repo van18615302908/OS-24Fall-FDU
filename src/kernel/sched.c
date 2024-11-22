@@ -11,7 +11,7 @@
 #define TIME_ELAPSE 2
 
 extern bool panic_flag;
-int debug_sched = 1;
+int debug_sched = 0;
 extern void swtch(KernelContext *new_ctx, KernelContext **old_ctx);
 
 static struct timer sched_timer[NCPU];

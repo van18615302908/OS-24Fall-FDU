@@ -146,3 +146,12 @@ void insert_into_list_lockfree(ListNode *list, ListNode *node)
     node->next->prev = node;
     list->next = node;
 }
+void insert_list_into_list_lockfree(ListNode *src_first, ListNode *src_last,
+                                    ListNode *dest)
+{
+    ListNode *dest_next = dest->next;
+    src_first->prev = dest;
+    dest->next = src_first;
+    dest_next->prev = src_last;
+    src_last->next = dest_next;
+}
