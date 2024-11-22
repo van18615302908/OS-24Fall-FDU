@@ -78,6 +78,5 @@ void queue_pop(Queue *x);
 ListNode *queue_front(Queue *x);
 bool queue_empty(Queue *x);
 void insert_at_tail(ListNode *head, ListNode *new_node);
-void insert_into_list_lockfree(ListNode *list, ListNode *node);
-void insert_list_into_list_lockfree(ListNode *src_first, ListNode *src_last,
+void insert_list_into_list(ListNode *src_first, ListNode *src_last,
                                     ListNode *dest);

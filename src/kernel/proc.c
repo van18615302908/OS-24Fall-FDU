@@ -19,12 +19,10 @@ void proc_entry();
 void init_kproc()
 {
     if(debug_proc)printk("init_kproc on CPU %lld\n",cpuid());
-    // 1. init global resources (e.g. locks, semaphores)
+
     init_spinlock(&global_process_lock);
     init_pid_pool();
 
-
-    // 2. init the root_proc (finished)
     init_proc(&root_proc);
     root_proc.parent = &root_proc;
 
@@ -34,7 +32,6 @@ void init_kproc()
 void init_proc(Proc *p)
 {
     if(debug_proc)printk("init_proc on CPU %lld\n",cpuid());
-    // setup the Proc with kstack and pid allocated
     acquire_spinlock(&global_process_lock);
     memset(p, 0, sizeof(Proc));
 
@@ -43,8 +40,7 @@ void init_proc(Proc *p)
     p->state = UNUSED;
     if(debug_proc)printk("init_proc pid %d state:%d\n", p->pid,p->state);
     p->kstack = kalloc_page();
-    p->ucontext = (UserContext *)((u64)p->kstack + PAGE_SIZE -
-                                  sizeof(KernelContext) - sizeof(UserContext));
+    p->ucontext = (UserContext *)((u64)p->kstack + PAGE_SIZE - sizeof(KernelContext) - sizeof(UserContext));
     p->kcontext = (KernelContext *)((u64)p->ucontext - sizeof(KernelContext));
 
     init_list_node(&p->children);
@@ -68,7 +64,6 @@ Proc *create_proc()
 void set_parent_to_this(Proc *proc)
 {
     if(debug_proc)printk("set_parent_to_this\n");
-    // set the parent of proc to thisproc
     acquire_spinlock(&global_process_lock);
 
     ASSERT(proc->parent == NULL);
@@ -77,7 +72,7 @@ void set_parent_to_this(Proc *proc)
     proc->parent = current;
 
     _detach_from_list(&proc->ptnode);
-    insert_into_list_lockfree(&current->children, &proc->ptnode);
+    _insert_into_list(&current->children, &proc->ptnode);
 
     release_spinlock(&global_process_lock);
 
@@ -88,19 +83,16 @@ int start_proc(Proc *p, void (*entry)(u64), u64 arg)
     if(debug_proc)printk("start_proc on CPU %lld\n",cpuid());
     acquire_spinlock(&global_process_lock);
 
-    // 1. set the parent to root_proc if NULL
     if (p->parent == NULL) {
         p->parent = &root_proc;
         _detach_from_list(&p->ptnode);
-        insert_into_list_lockfree(&root_proc.children, &p->ptnode);
+        _insert_into_list(&root_proc.children, &p->ptnode);
     }
 
-    // 2. setup the kcontext to make the proc start with proc_entry(entry, arg)
     p->kcontext->lr = (u64)&proc_entry;
     p->kcontext->x0 = (u64)entry;
     p->kcontext->x1 = arg;
 
-    // 3. activate the proc and return its pid
     int pid = p->pid;
 
     activate_proc(p);
@@ -174,7 +166,7 @@ NO_RETURN void exit(int code)
 
     if (!_empty_list(&current->children)) {
         // PANIC();
-        insert_list_into_list_lockfree(current->children.next,
+        insert_list_into_list(current->children.next,
                                        current->children.prev,
                                        &root_proc.children);
     }
@@ -186,13 +178,13 @@ NO_RETURN void exit(int code)
         proc->parent = &root_proc;
         p_next = p->next;
         _detach_from_list(p);
-        insert_into_list_lockfree(&root_proc.zombie_children, p);
+        _insert_into_list(&root_proc.zombie_children, p);
         post_sem(&root_proc.childexit);
     }
 
     // Remove self from parent's child list and add to zombie child list
     _detach_from_list(&current->ptnode);
-    insert_into_list_lockfree(&current->parent->zombie_children,
+    _insert_into_list(&current->parent->zombie_children,
                               &current->ptnode);
 
     // Notify parent
@@ -204,7 +196,6 @@ NO_RETURN void exit(int code)
     PANIC(); // prevent the warning of 'no_return function returns'
 }
 
-// DFS. Must call this function with process locked
 Proc *find_proc_by_pid(Proc *start_proc, int pid)
 {
     _for_in_list(p, &start_proc->children)

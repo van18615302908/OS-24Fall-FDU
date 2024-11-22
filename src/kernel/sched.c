@@ -110,7 +110,7 @@ bool _activate_proc(Proc *p, bool onalert)
         // if (p->state == SLEEPING || p->state == UNUSED) {
         p->state = RUNNABLE;
         
-        insert_into_list_lockfree(sched_list.prev, &p->schinfo.node);
+        _insert_into_list(sched_list.prev, &p->schinfo.node);
         if(debug_sched)printk("activate_proc on CPU %lld: pid = %d,state(new):%d\n", cpuid(), p->pid,p->state);
         release_sched_lock();
         return true;
@@ -131,7 +131,7 @@ void update_this_state(enum procstate new_state)
     current->state = new_state;
     if (!current->idle) {
         if (new_state == RUNNABLE) {
-            insert_into_list_lockfree(sched_list.prev, &current->schinfo.node);
+            _insert_into_list(sched_list.prev, &current->schinfo.node);
         } else if (old_state == RUNNABLE) {
             _for_in_list(p, &sched_list)
             {
