@@ -1,4 +1,3 @@
-
 #include <kernel/proc.h>
 #include <kernel/mem.h>
 #include <kernel/sched.h>
@@ -9,7 +8,7 @@
 #include <kernel/pid.h>
 
 Proc root_proc;
-int debug_proc = 0;
+int debug_proc = 1;
 
 static SpinLock global_process_lock;
 void kernel_entry();
@@ -40,9 +39,9 @@ void init_proc(Proc *p)
     memset(p, 0, sizeof(Proc));
 
     p->pid = allocate_pid();
-    printk("init_proc pid:%d\n", p->pid);
+    if(debug_proc)printk("init_proc pid:%d\n", p->pid);
     p->state = UNUSED;
-    printk("init_proc pid %d state:%d\n", p->pid,p->state);
+    if(debug_proc)printk("init_proc pid %d state:%d\n", p->pid,p->state);
     p->kstack = kalloc_page();
     p->ucontext = (UserContext *)((u64)p->kstack + PAGE_SIZE -
                                   sizeof(KernelContext) - sizeof(UserContext));
