@@ -6,7 +6,7 @@
 #include <common/rbtree.h>
 #include <kernel/pt.h>
 
-enum procstate { UNUSED, RUNNABLE, RUNNING, SLEEPING,  ZOMBIE ,DEEPSLEEPING};//从0开始
+enum procstate { UNUSED, RUNNABLE, RUNNING, SLEEPING, ZOMBIE ,DEEPSLEEPING};//从0开始
 
 typedef struct UserContext {
     // TODO: customize your trap frame
@@ -25,6 +25,7 @@ typedef struct KernelContext {
 typedef struct schinfo {
     // TODO: customize your sched info
     ListNode rq;//运行队列
+    ListNode node;
 } Schinfo;
 
 typedef struct Proc {
@@ -34,8 +35,9 @@ typedef struct Proc {
     int exitcode;
     enum procstate state;
     Semaphore childexit;
-    ListNode children;//子进程
-    ListNode ptnode;//当前进程
+    ListNode children;
+    ListNode zombie_children;
+    ListNode ptnode;
     struct Proc *parent;
     struct schinfo schinfo;
     struct pgdir pgdir;
@@ -46,8 +48,8 @@ typedef struct Proc {
 
 void init_kproc();
 void init_proc(Proc *);
-WARN_RESULT Proc *create_proc();
+Proc *create_proc();
 int start_proc(Proc *, void (*entry)(u64), u64 arg);
 NO_RETURN void exit(int code);
-WARN_RESULT int wait(int *exitcode);
-WARN_RESULT int kill(int pid);
+int wait(int *exitcode);
+int kill(int pid);

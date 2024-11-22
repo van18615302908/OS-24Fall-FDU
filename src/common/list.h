@@ -23,7 +23,7 @@ ListNode *_merge_list(ListNode *node1, ListNode *node2);
 // node list. It usually returns `node->prev`. If `node` is
 // the last one in the list, it will return NULL.
 ListNode *_detach_from_list(ListNode *node);
-// - walk through the list，跳过头节点
+// - walk through the list
 #define _for_in_list(valptr, list)                                  \
     for (ListNode *__flag = (list), *valptr = __flag->next; valptr; \
          valptr = valptr == __flag ? (void *)0 : valptr->next)
@@ -78,4 +78,4 @@ void queue_pop(Queue *x);
 ListNode *queue_front(Queue *x);
 bool queue_empty(Queue *x);
 void insert_at_tail(ListNode *head, ListNode *new_node);
-void insert_into_list_my(ListNode *list, ListNode *node);
+void insert_into_list_lockfree(ListNode *list, ListNode *node);
