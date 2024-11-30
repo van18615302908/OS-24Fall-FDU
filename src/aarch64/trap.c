@@ -33,7 +33,9 @@ void trap_global_handler(UserContext *context)
     case ESR_EC_IABORT_EL1:
     case ESR_EC_DABORT_EL0:
     case ESR_EC_DABORT_EL1: {
-        printk("Page fault\n");
+        // printk("Page fault\n");
+        printk("Page fault on CPU:%lld, DFSC:%llx\n",  cpuid(),iss& 0x1F);
+        
         PANIC();
     } break;
     default: {
@@ -43,6 +45,10 @@ void trap_global_handler(UserContext *context)
     }
 
     // TODO: stop killed process while returning to user space
+    if(thisproc()->killed && thisproc()->ucontext->spsr != 0){
+        exit(-1);
+    }
+       
 }
 
 NO_RETURN void trap_error_handler(u64 type)
