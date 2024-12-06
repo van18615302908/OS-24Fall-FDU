@@ -268,28 +268,29 @@ static usize inode_map(OpContext* ctx,
     u32 block_no;
     auto entry = &inode->entry;
     *modified = false;
+    usize block_number = offset / BLOCK_SIZE;
     //如果偏移量对应直接块
-    if(offset < INODE_NUM_DIRECT){
-        if(entry->addrs[offset] == NULL){
-            entry->addrs[offset] = cache->alloc(ctx);
+    if(block_number < INODE_NUM_DIRECT){
+        if(entry->addrs[block_number] == NULL){
+            entry->addrs[block_number] = cache->alloc(ctx);
             *modified = true;
         }
-        block_no = entry->addrs[offset];
-    }else if(offset < INODE_NUM_DIRECT + INODE_NUM_INDIRECT){
+        block_no = entry->addrs[block_number];
+    }else if(block_number < INODE_NUM_DIRECT + INODE_NUM_INDIRECT){
         //如果偏移量对应间接块
-        offset -= INODE_NUM_DIRECT;
+        block_number -= INODE_NUM_DIRECT;
         //首先检查 entry->indirect 是否为空。如果为空，则需要分配一个新的间接块来存储更多的块地址。
         if(entry->indirect == NULL){
             entry->indirect = cache->alloc(ctx);
         }
         auto b = cache->acquire(entry->indirect);
         auto addrs = get_addrs(b);
-        if(addrs[offset] == NULL){
-            addrs[offset] = cache->alloc(ctx);
+        if(addrs[block_number] == NULL){
+            addrs[block_number] = cache->alloc(ctx);
             cache->sync(ctx, b);
             *modified = true;
         }
-        block_no = addrs[offset];
+        block_no = addrs[block_number];
         cache->release(b);
     }else{
         PANIC();
@@ -313,7 +314,8 @@ static usize inode_read(Inode* inode, u8* dest, usize offset, usize count) {
     for(usize i = offset/BLOCK_SIZE; i <= (end-1)/BLOCK_SIZE; i++){
         usize n = MIN(end - offset, (i + 1) * BLOCK_SIZE - offset);
         bool modified;
-        auto block_no = inode_map(NULL, inode, i, &modified);
+        auto block_no = inode_map(NULL, inode, offset, &modified);
+        // auto block_no = inode_map(NULL, inode, i, &modified);
         auto b = cache->acquire(block_no);
         memmove(dest + count, b->data + offset % BLOCK_SIZE, n);
         cache->release(b);
@@ -342,7 +344,8 @@ static usize inode_write(OpContext* ctx,
         usize n = MIN(end - offset, (i + 1) * BLOCK_SIZE - offset);
         bool modified;
         //获取与当前块号（i）对应的物理块号
-        auto block_no = inode_map(ctx, inode, i, &modified);
+        auto block_no = inode_map(ctx, inode, offset, &modified);
+        // auto block_no = inode_map(ctx, inode, i, &modified);
         //数据写入
         auto b = cache->acquire(block_no);
         memmove(b->data + offset % BLOCK_SIZE, src + count, n);
@@ -392,7 +395,7 @@ static usize inode_insert(OpContext* ctx,
     if(inode_lookup(inode, name, &index) != 0){
         return -1;
     }
-
+    //找到空闲的目录项
     DirEntry de;
     u32 offset = 0;
     for(offset = 0; offset < entry->num_bytes; offset += sizeof(DirEntry)){
@@ -401,7 +404,7 @@ static usize inode_insert(OpContext* ctx,
             break;
         }
     }
-
+    //如果目录项已满，需要增加目录项
     de.inode_no = inode_no;
     memmove(de.name, name, FILE_NAME_MAX_LENGTH);
     inode_write(ctx, inode, (u8*)&de, offset, sizeof(DirEntry));
