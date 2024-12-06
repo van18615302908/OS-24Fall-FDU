@@ -138,7 +138,7 @@ static void inode_sync(OpContext* ctx, Inode* inode, bool do_write) {
 static Inode* inode_get(usize inode_no) {
     ASSERT(inode_no > 0);
     ASSERT(inode_no < sblock->num_inodes);
-    _acquire_spinlock(&lock);
+    acquire_spinlock(&lock);
     // TODO
     Inode* inode;
 
@@ -146,9 +146,9 @@ static Inode* inode_get(usize inode_no) {
         if(p == &head) continue;
         inode = container_of(p, Inode, node);
         if(inode->inode_no == inode_no){
-            _increment_rc(&inode->rc);
+            increment_rc(&inode->rc);
             //增加引用计数
-            _release_spinlock(&lock);
+            release_spinlock(&lock);
             inode_lock(inode);
             inode_unlock(inode);
             return inode;
@@ -159,12 +159,12 @@ static Inode* inode_get(usize inode_no) {
     inode = kalloc(sizeof(Inode));
     init_inode(inode);
     inode->inode_no = inode_no;
-    _increment_rc(&inode->rc);
+    increment_rc(&inode->rc);
     _insert_into_list(&head, &inode->node);
 
     //加载到内存
     inode_lock(inode);
-    _release_spinlock(&lock);
+    release_spinlock(&lock);
     inode_sync(NULL, inode, false);
     inode_unlock(inode);  
 
@@ -207,22 +207,22 @@ static void inode_clear(OpContext* ctx, Inode* inode) {
 static Inode* inode_share(Inode* inode) {
     // TODO
     //增加引用计数
-    _acquire_spinlock(&lock);
-    _increment_rc(&inode->rc);
-    _release_spinlock(&lock);
+    acquire_spinlock(&lock);
+    increment_rc(&inode->rc);
+    release_spinlock(&lock);
     return inode;
 }
 
 // see `inode.h`.
 static void inode_put(OpContext* ctx, Inode* inode) {
     // TODO
-    _acquire_spinlock(&lock);
+    acquire_spinlock(&lock);
     //引用计数检查，确保未被引用并且put后变为0
     if(inode->rc.count == 1 && inode->entry.num_links == 0 && inode->valid){
         //从全局 inode 链表中将该 inode 移除
         _detach_from_list(&inode->node);
         inode_lock(inode);
-        _release_spinlock(&lock);
+        release_spinlock(&lock);
         //清理 inode相关资源
         inode_clear(ctx, inode);
         inode->entry.type = INODE_INVALID;
@@ -233,8 +233,8 @@ static void inode_put(OpContext* ctx, Inode* inode) {
         return;
     }
     //引用计数减少（操作后应该变为0）
-    _decrement_rc(&inode->rc);
-    _release_spinlock(&lock);    
+    decrement_rc(&inode->rc);
+    release_spinlock(&lock);    
 }
 
 /**
@@ -264,6 +264,7 @@ static usize inode_map(OpContext* ctx,
                        usize offset,
                        bool* modified) {
     // TODO
+    //这里的偏移量 offset 不是字节偏移量，是块号
     u32 block_no;
     auto entry = &inode->entry;
     *modified = false;
