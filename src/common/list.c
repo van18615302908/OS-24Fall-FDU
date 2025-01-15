@@ -43,7 +43,7 @@ ListNode *_detach_from_list(ListNode *node)
 
     if (prev == node)
         return NULL;
-    return prev;
+    return node;//修改为返回删除的节点
 }
 
 QueueNode *add_to_queue(QueueNode **head, QueueNode *node)
@@ -118,4 +118,34 @@ ListNode *queue_front(Queue *x)
 bool queue_empty(Queue *x)
 {
     return x->sz == 0;
+}
+
+// 将节点插入到链表的尾部
+void insert_at_tail(ListNode *head, ListNode *new_node) {
+    // 如果链表为空，直接返回新的节点作为头节点
+    if (!head) {
+        head = new_node;
+        return;
+    }
+
+    // 找到链表的尾节点
+    ListNode *tail = head;
+    while (tail->next != head) {
+        tail = tail->next;
+    }
+
+    // 将新节点插入到尾部
+    tail->next = new_node;
+    new_node->prev = tail;
+    new_node->next = head;  // 新的尾节点的next为head
+}
+
+void insert_list_into_list(ListNode *src_first, ListNode *src_last,
+                                    ListNode *dest)
+{
+    ListNode *dest_next = dest->next;
+    src_first->prev = dest;
+    dest->next = src_first;
+    dest_next->prev = src_last;
+    src_last->next = dest_next;
 }

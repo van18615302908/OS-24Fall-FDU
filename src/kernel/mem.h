@@ -13,8 +13,8 @@ struct page {
 void kinit();
 u64 left_page_cnt();
 
-WARN_RESULT void *kalloc_page();
-void kfree_page(void *);
+WARN_RESULT void* kalloc_page();
+void kfree_page(void*);
 
 WARN_RESULT void *kalloc(unsigned long long);
 void kfree(void *);

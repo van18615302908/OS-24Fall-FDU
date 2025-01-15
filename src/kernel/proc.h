@@ -8,20 +8,26 @@
 #include <fs/file.h>
 #include <fs/inode.h>
 
-enum procstate { UNUSED, RUNNABLE, RUNNING, SLEEPING, DEEPSLEEPING, ZOMBIE };
+enum procstate { UNUSED, RUNNABLE, RUNNING, SLEEPING, ZOMBIE ,DEEPSLEEPING};//从0开始
 
 typedef struct UserContext {
     // TODO: customize your trap frame
+    u64 spsr, elr, sp_el0;
+    u64 x[31];//x0-x31
 } UserContext;
 
 typedef struct KernelContext {
     // TODO: customize your context
+    u64 lr,x0,x1;
+    u64 x[11];//x19-29
+
 } KernelContext;
 
 // embeded data for procs
-struct schinfo {
+typedef struct schinfo {
     // TODO: customize your sched info
-};
+    ListNode node;
+} Schinfo;
 
 typedef struct Proc {
     bool killed;
@@ -31,6 +37,7 @@ typedef struct Proc {
     enum procstate state;
     Semaphore childexit;
     ListNode children;
+    ListNode zombie_children;
     ListNode ptnode;
     struct Proc *parent;
     struct schinfo schinfo;
@@ -44,7 +51,7 @@ typedef struct Proc {
 
 void init_kproc();
 void init_proc(Proc *);
-WARN_RESULT Proc *create_proc();
+Proc *create_proc();
 int start_proc(Proc *, void (*entry)(u64), u64 arg);
 NO_RETURN void exit(int code);
 WARN_RESULT int wait(int *exitcode);
