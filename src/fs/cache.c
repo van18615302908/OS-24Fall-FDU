@@ -164,9 +164,9 @@ static Block *cache_acquire(usize block_no) {
         ListNode* p = head.prev;//找到链表的尾部
         while(p != &head && cnum >= EVICTION_THRESHOLD ){
             Block* b = container_of(p, Block, node);
-            if(p->prev == &p){
-                printk("自环！！！！！！！！！！\n");
-            }
+            // if(p->prev == &p){
+            //     printk("自环！！！！！！！！！！\n");
+            // }
             if(!b->pinned && !b->acquired){
                 //如果该块未被固定且未被获取，则可以安全地驱逐
                 ListNode* temp = p->prev;

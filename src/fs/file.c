@@ -4,6 +4,7 @@
 #include <common/sem.h>
 #include <fs/inode.h>
 #include <common/list.h>
+#include <fs/pipe.h>
 #include <kernel/mem.h>
 
 // the global file table.
@@ -24,15 +25,15 @@ void init_oftable(struct oftable *oftable) {
 /* Allocate a file structure. */
 struct file* file_alloc() {
     /* (Final) TODO BEGIN */
-    _acquire_spinlock(&ftable.lock);
+    acquire_spinlock(&ftable.lock);
     for(int i=0; i<NOFILE; i++){
         if(ftable.file[i].ref <= 0){
             ftable.file[i].ref = 1;
-            _release_spinlock(&ftable.lock);
+            release_spinlock(&ftable.lock);
             return &ftable.file[i];
         }
     }
-    _release_spinlock(&ftable.lock);
+    release_spinlock(&ftable.lock);
     /* (Final) TODO END */
     return 0;
 }
@@ -40,9 +41,9 @@ struct file* file_alloc() {
 /* Increment ref count for file f. */
 struct file* file_dup(struct file* f) {
     /* (Final) TODO BEGIN */
-    _acquire_spinlock(&ftable.lock);
+    acquire_spinlock(&ftable.lock);
     f->ref++;
-    _release_spinlock(&ftable.lock);
+    release_spinlock(&ftable.lock);
     /* (Final) TODO END */
     return f;
 }
@@ -50,24 +51,24 @@ struct file* file_dup(struct file* f) {
 /* Close file f. (Decrement ref count, close when reaches 0.) */
 void file_close(struct file* f) {
     /* (Final) TODO BEGIN */
-    _acquire_spinlock(&ftable.lock);
+    acquire_spinlock(&ftable.lock);
     f->ref--;
     if(f->ref == 0){
         if(f->type == FD_INODE){
             Inode* inode = f->ip;
             f->type = FD_NONE;
-            _release_spinlock(&ftable.lock);
+            release_spinlock(&ftable.lock);
             OpContext ctx;
             bcache.begin_op(&ctx);
             inodes.put(&ctx, inode);
             bcache.end_op(&ctx);
         }else if(f->type == FD_PIPE){
-            pipeClose(f->pipe, f->writable);
-            _release_spinlock(&ftable.lock);
+            pipe_close(f->pipe, f->writable);
+            release_spinlock(&ftable.lock);
         }
         return;
     }
-    _release_spinlock(&ftable.lock);
+    release_spinlock(&ftable.lock);
     /* (Final) TODO END */
 }
 
@@ -94,7 +95,7 @@ isize file_read(struct file* f, char* addr, isize n) {
         inodes.unlock(f->ip);
         return n;
     }else if(f->type == FD_PIPE && f->readable){
-        return pipeRead(f->pipe, (u64)addr, n);
+        return pipe_read(f->pipe, (u64)addr, n);
     }  
     /* (Final) TODO END */
     return 0;
@@ -110,7 +111,7 @@ isize file_write(struct file* f, char* addr, isize n) {
         usize max_input = MIN(INODE_MAX_BYTES - f->off, (usize)n);
         usize n_w = 0;
         while(n_w != max_input){
-            Assert(n_w <= max_input);//防止死循环
+            ASSERT(n_w <= max_input);//防止死循环
             usize this = MIN(max_input - n_w, (usize)(OP_MAX_NUM_BLOCKS * BLOCK_SIZE / 2));
             OpContext ctx;
             bcache.begin_op(&ctx);
@@ -128,7 +129,7 @@ isize file_write(struct file* f, char* addr, isize n) {
         }
     }
     else if(f->type == FD_PIPE){
-        ret = pipeWrite(f->pipe, (u64)addr, n);
+        ret = pipe_write(f->pipe, (u64)addr, n);
     }
     return ret;
 }

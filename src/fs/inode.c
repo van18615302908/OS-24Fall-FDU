@@ -2,10 +2,9 @@
 #include <fs/inode.h>
 #include <kernel/mem.h>
 #include <kernel/printk.h>
-#include <sys/stat.h>
-#include <sys/types.h>
 #include <kernel/console.h>
 #include <kernel/sched.h>
+#include <sys/stat.h>
 
 /**
     @brief the private reference to the super block.
@@ -502,7 +501,41 @@ static Inode* namex(const char* path,
                     char* name,
                     OpContext* ctx) {
     /* (Final) TODO BEGIN */
-    
+    if(strncmp(path, "/", 2) == 0){
+        return inodes.get(inodes.root->inode_no);
+    }
+    Inode* ret;
+    //设置起始目录
+    if(path[0] == '.' || path[0] != '/')ret = inodes.get(thisproc()->cwd->inode_no);
+    else ret = inodes.get(inodes.root->inode_no);
+
+    usize index;
+    name[0] = 0;
+    path = skipelem(path, name);
+    if(path == NULL){
+        inodes.put(ctx, ret);
+        return NULL;
+    }
+    //遍历目录
+    while(path[0] != '\0'){
+        inodes.lock(ret);
+        usize ino = inodes.lookup(ret, name, &index);
+        inodes.unlock(ret);
+        inodes.put(ctx, ret);
+        if(ino == 0)return NULL;
+        ret = inodes.get(ino);
+        path = skipelem(path, name);
+    }
+    if(!nameiparent){
+        inodes.lock(ret);
+        usize ino = inodes.lookup(ret, name, &index);
+        inodes.unlock(ret);
+        inodes.put(ctx, ret);
+        if(ino == 0)return NULL;
+        ret = inodes.get(ino);
+        name = NULL;
+    }
+    return ret; 
     /* (Final) TODO END */
     return 0;
 }
