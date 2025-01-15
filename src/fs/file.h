@@ -10,6 +10,8 @@
 
 // maximum number of open files in the whole system.
 #define NFILE 65536  
+//NOFILE不是官方定义的，是我们自己定义的，表示每个进程最多打开的文件数
+#define NOFILE 128  // open files per process
 
 typedef struct file {
     // type of the file.
@@ -31,12 +33,14 @@ typedef struct file {
 
 struct ftable {
     // TODO: table of file objects in the system
-
+    SpinLock lock;
+    File file[NFILE];
     // Note: you may need a lock to prevent concurrent access to the table!
 };
 
 struct oftable {
     // TODO: table of opened file descriptors in a process
+    File* fp[NOFILE];
 };
 
 // initialize the global file table.
