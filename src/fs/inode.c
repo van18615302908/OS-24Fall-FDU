@@ -2,6 +2,10 @@
 #include <fs/inode.h>
 #include <kernel/mem.h>
 #include <kernel/printk.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <kernel/console.h>
+#include <kernel/sched.h>
 
 /**
     @brief the private reference to the super block.
