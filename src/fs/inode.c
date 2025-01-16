@@ -312,6 +312,10 @@ static usize inode_read(Inode* inode, u8* dest, usize offset, usize count) {
     ASSERT(offset <= end);
 
     // TODO
+    if(inode->entry.type == INODE_DEVICE){
+        return console_read(inode, (char*)dest, count);
+    }    
+
     if(count == 0) return count;
     count = 0;
     for(usize i = offset/BLOCK_SIZE; i <= (end-1)/BLOCK_SIZE; i++){
@@ -341,6 +345,11 @@ static usize inode_write(OpContext* ctx,
     ASSERT(offset <= end);
 
     // TODO
+    if(inode->entry.type == INODE_DEVICE){
+        return console_write(inode, (char*)src, count);
+    }
+
+
     //通过计算偏移量 offset 和结束位置 end 所在的块号范围，逐块处理数据的写
     count = 0;
     for(usize i = offset/BLOCK_SIZE; i <= (end-1)/BLOCK_SIZE; i++){
