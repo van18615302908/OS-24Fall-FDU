@@ -258,4 +258,71 @@ int fork()
      */
 
     /* (Final) TODO END */
+    auto this = thisproc();
+    auto new = create_proc();
+    //设置父子关系
+    acquire_spinlock(&global_process_lock);
+    new->parent = this;
+    _insert_into_list(&this->children, &new->ptnode);
+    release_spinlock(&global_process_lock);
+    // TrapFrame 和用户上下文
+    memcpy((void*)new->ucontext, (void*)this->ucontext, sizeof(UserContext));
+    new->ucontext->x[0] = 0;
+
+    //遍历父进程的页面段表，为子进程分配相应的内存段
+    acquire_spinlock(&this->pgdir.lock);
+    _for_in_list(p, &this->pgdir.section_head){
+        if(p != &this->pgdir.section_head){
+            auto st = container_of(p, struct section, stnode);
+            auto new_st = (struct section*)kalloc(sizeof(struct section));
+            memset(new_st, 0, sizeof(struct section));
+            if(new_st == NULL){
+                ASSERT(kill(new->pid) != -1);
+                break;
+            }
+            new_st->begin = st->begin;
+            new_st->end = st->end;
+            new_st->flags = st->flags;
+            if(st->fp){
+                new_st->fp = file_dup(st->fp);
+                new_st->offset = st->offset;
+                new_st->length = st->length;
+            }
+            _insert_into_list(new->pgdir.section_head.prev, &new_st->stnode);
+
+            for(auto va = PAGE_BASE(st->begin); va < st->end; va += PAGE_SIZE){
+                auto pte = get_pte(&this->pgdir, va, false);
+                if(pte && (*pte & PTE_VALID)){
+                    *pte |= PTE_RO;
+                    vmmap(&new->pgdir, va, (void*)P2K(PTE_ADDRESS(*pte)), PTE_FLAGS(*pte));
+                    kshare_page(P2K(PTE_ADDRESS(*pte)));
+                    // copyout(&new->pgdir, (void*)va, (void*)P2K(PTE_ADDRESS(*pte)), PAGE_SIZE);
+                    // auto new_pte = get_pte(&new->pgdir, va, false);
+                    // *new_pte |= PTE_USER_DATA | PTE_RW;
+                }
+            }
+        }
+    }
+    arch_tlbi_vmalle1is();//刷新TLB
+    release_spinlock(&this->pgdir.lock);
+    //复制当前进程的工作目录（cwd）到子进程。如果工作目录不同于父进程，则需要增加引用计数。
+    memset((void*)&new->oftable, 0, sizeof(struct oftable));
+    if(new->cwd != this->cwd){
+        OpContext ctx;
+        bcache.begin_op(&ctx);
+        inodes.put(&ctx, new->cwd);
+        bcache.end_op(&ctx);
+        new->cwd = inodes.share(this->cwd);
+    }
+
+    for(auto i = 0; i < NOFILE; i++){
+        if(this->oftable.fp[i] ){//may_bug
+            new->oftable.fp[i] = file_dup(this->oftable.fp[i]);
+        }
+        else break;
+    }
+
+    start_proc(new, trap_return, 0);
+
+    return new->pid;
 }
