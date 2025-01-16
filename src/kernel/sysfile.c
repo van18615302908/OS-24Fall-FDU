@@ -37,7 +37,8 @@ struct iovec {
 static struct file *fd2file(int fd)
 {
     /* (Final) TODO BEGIN */
-    
+    if(fd < 0 || fd >= NOFILE)return NULL;
+    else return thisproc()->oftable.fp[fd];
     /* (Final) TODO END */
 }
 
@@ -48,7 +49,17 @@ static struct file *fd2file(int fd)
 int fdalloc(struct file *f)
 {
     /* (Final) TODO BEGIN */
-    
+        struct oftable* ft = &thisproc()->oftable;
+    int i = 0;
+    for(i = 0; i < NOFILE; i++){
+        if(ft->fp[i] == NULL){
+            ft->fp[i] = f;
+            break;
+        }
+    }
+    if(i < NOFILE){
+        return i;
+    }
     /* (Final) TODO END */
     return -1;
 }
@@ -123,7 +134,12 @@ define_syscall(writev, int fd, struct iovec *iov, int iovcnt)
 define_syscall(close, int fd)
 {
     /* (Final) TODO BEGIN */
-    
+    if(fd < 0 || fd >= NOFILE)return -1;
+    auto ft = &thisproc()->oftable;
+    if(ft->fp[fd]){
+        file_close(ft->fp[fd]);
+        ft->fp[fd] = NULL;
+    }
     /* (Final) TODO END */
     return 0;
 }
@@ -261,7 +277,47 @@ Inode *create(const char *path, short type, short major, short minor,
               OpContext *ctx)
 {
     /* (Final) TODO BEGIN */
-    
+    char name[FILE_NAME_MAX_LENGTH] = {0};
+    usize index;
+    Inode* parent = nameiparent(path, name, ctx);//获取父目录
+    if(!parent)return NULL;//如果父目录不存在，返回NULL
+    inodes.lock(parent);
+    //检查是否已经存在
+    usize ino = inodes.lookup(parent, name, &index);
+    if(ino){
+        inodes.unlock(parent);
+        inodes.put(ctx, parent);
+        return inodes.get(ino);
+    }//如果已经存在，直接返回
+    else{
+        ino = inodes.alloc(ctx, type);
+        //分配失败
+        if(ino == 0){
+            inodes.unlock(parent);
+            inodes.put(ctx, parent);
+            return NULL;
+        }
+        //分配成功
+        Inode* node = inodes.get(ino);
+        inodes.lock(node);
+        node->entry.type = type;
+        node->entry.major = major;
+        node->entry.minor = minor;
+        node->entry.num_links = 1;
+        //写入磁盘
+        if(type == INODE_DIRECTORY){
+            node->entry.num_links++;
+            ASSERT(inodes.insert(ctx, node, ".", ino) != (usize)-1);
+            ASSERT(inodes.insert(ctx, node, "..", parent->inode_no) != (usize)-1);
+        }
+        //同步并释放资源
+        inodes.sync(ctx, node, true);
+
+        ASSERT(inodes.insert(ctx, parent, name, ino) != (usize)-1);
+        inodes.unlock(parent);
+        inodes.put(ctx, parent);
+        return node;
+    }
     /* (Final) TODO END */
     return 0;
 }
@@ -374,7 +430,21 @@ define_syscall(chdir, const char *path)
      * Change the cwd (current working dictionary) of current process to 'path'.
      * You may need to do some validations.
      */
-    
+    OpContext ctx;
+    bcache.begin_op(&ctx);
+    //获取inode
+    Inode* node = namei(path, &ctx);
+    if(node){
+        inodes.put(&ctx, thisproc()->cwd);
+        bcache.end_op(&ctx);
+        thisproc()->cwd = node;
+        return 0;
+    }
+    else {//可能会获取失败
+        bcache.end_op(&ctx);
+        printk("chdir: failed to change cwd\n");
+        return -1;
+    }
     /* (Final) TODO END */
 }
 
