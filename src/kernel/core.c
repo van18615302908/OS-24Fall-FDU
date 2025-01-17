@@ -4,6 +4,11 @@
 #include <kernel/sched.h>
 #include <test/test.h>
 #include <driver/virtio.h>
+#include <kernel/mem.h>
+#include <kernel/paging.h>
+#include <common/buf.h>
+#include <driver/virtio.h>
+#include <driver/memlayout.h>
 
 volatile bool panic_flag;
 
@@ -23,15 +28,17 @@ NO_RETURN void idle_entry()
     arch_stop_cpu();
 }
 
+void trap_return();
+
 NO_RETURN void kernel_entry()
 {
-    init_filesystem();
+    // init_filesystem();
 
     printk("Hello world! (Core %lld)\n", cpuid());
     // proc_test();
     // vm_test();
     // user_proc_test();
-    // io_test();
+    io_test();
 
     /* LAB 4 TODO 3 BEGIN */
     Buf mbr_buf;
@@ -54,7 +61,39 @@ NO_RETURN void kernel_entry()
      * Map init.S to user space and trap_return to run icode.
      */
 
+    extern char icode[], eicode[];
+    Proc *proc = create_proc();
 
+    u64 icode_page = (u64)PAGE_BASE(icode);
+    for (u64 q = icode_page; q < (u64)eicode; q += PAGE_SIZE) {
+        // Map code to EXTMEM
+        vmmap(&proc->pgdir, EXTMEM + q - icode_page, (void *)q, PTE_USER_DATA);
+    }
+    ASSERT(proc->pgdir.pt);
+
+    struct section *code_section =
+            (struct section *)kalloc(sizeof(struct section));
+    code_section->begin = EXTMEM + (u64)(icode - icode_page);
+    code_section->end = code_section->begin + (eicode - icode);
+    code_section->flags = ST_TEXT;
+    code_section->fp = NULL;
+    _insert_into_list(&proc->pgdir.section_head, &code_section->stnode);
+
+    proc->cwd = inodes.share(inodes.root);
+
+    proc->ucontext->elr = code_section->begin;
+    // Put stack pointer at max address
+    proc->ucontext->sp = PHYSTOP;
+    // Hint enter user mode
+    proc->ucontext->spsr = 0;
+    start_proc(proc, trap_return, 0);
+
+    // An infinite loop
+    while (true) {
+        int code;
+        int pid = wait(&code);
+        ASSERT(pid != 0);
+    }
     /* (Final) TODO END */
 }
 

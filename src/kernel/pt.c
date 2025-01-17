@@ -1,8 +1,15 @@
+#include <kernel/pt.h>
+#include <kernel/mem.h>
+#include <common/string.h>
+#include <kernel/printk.h>
 #include <aarch64/intrinsic.h>
 #include <common/string.h>
 #include <kernel/mem.h>
 #include <kernel/pt.h>
-#include <kernel/printk.h>
+#include <kernel/paging.h>
+
+#define CHECK_DESCRIPTOR(entry) ((entry) & 0x1)
+#define VA_STOP 0xFFFFFFFFFFFF
 
 int debug_pt = 0;
 PTEntriesPtr get_pte(struct pgdir *pgdir, u64 va, bool alloc)
@@ -104,6 +111,39 @@ void attach_pgdir(struct pgdir *pgdir)
         arch_set_ttbr0(K2P(&invalid_pt));
 }
 
+
+// Copy page table with COW support accroding to the section defs
+void copy_pgdir(struct pgdir *src, struct pgdir *dest)
+{
+    if (!src->pt) {
+        return;
+    }
+
+    ListNode *node = src->section_head.next;
+    // Look for heap section
+    while (node != &src->section_head) {
+        struct section *section = container_of(node, struct section, stnode);
+
+        u64 page_base = PAGE_BASE(section->begin);
+        while (page_base < section->end) {
+            PTEntriesPtr src_pte = get_pte(src, page_base, false);
+            ASSERT(src_pte != NULL);
+
+            void *phys_page = share_page((void *)P2K(PTE_ADDRESS(*src_pte)));
+            vmmap(dest, page_base, phys_page, PTE_USER_DATA | PTE_RO);
+
+            // Change original pte to readonly
+            *src_pte |= PTE_RO;
+            page_base += PAGE_SIZE;
+        }
+
+        node = node->next;
+    }
+
+    arch_tlbi_vmalle1is();
+}
+
+
 /**
  * Map virtual address 'va' to the physical address represented by kernel
  * address 'ka' in page directory 'pd', 'flags' is the flags for the page
@@ -112,6 +152,29 @@ void attach_pgdir(struct pgdir *pgdir)
 void vmmap(struct pgdir *pd, u64 va, void *ka, u64 flags)
 {
     /* (Final) TODO BEGIN */
+
+    // TODO
+    // Map virtual address 'va' to the physical address represented by kernel
+    // address 'ka' in page directory 'pd', 'flags' is the flags for the page
+    // table entry
+
+    ASSERT(va % PAGE_SIZE == 0);
+    ASSERT((u64)ka % PAGE_SIZE == 0);
+
+    PTEntriesPtr pte = get_pte(pd, va, true);
+    ASSERT(pte != NULL);
+
+    // Free the original page if there is
+    if ((*pte) & 0x1) {
+        // Kernel address of physical page
+        void *old_page = (void *)P2K(PTE_ADDRESS(*pte));
+        kfree_page(old_page);
+    }
+
+    *pte = K2P(ka) | flags;
+
+    // Flush tlb to avoid strange bugs
+    arch_tlbi_vmalle1is();
 
     /* (Final) TODO END */
 }
@@ -124,6 +187,36 @@ void vmmap(struct pgdir *pd, u64 va, void *ka, u64 flags)
 int copyout(struct pgdir *pd, void *va, void *p, usize len)
 {
     /* (Final) TODO BEGIN */
+    char *source = (char *)p;
+    u64 va_offset = (u64)va;
 
+    while (len > 0) {
+        u64 va_page_base = PAGE_BASE(va_offset);
+        PTEntriesPtr pte = get_pte(pd, va_page_base, true);
+        if (pte == NULL) {
+            return -1;
+        }
+
+        // Allocate page if there isn't one
+        if (!CHECK_DESCRIPTOR(*pte)) {
+            char *new_page = (char *)kalloc_page();
+            if (new_page == NULL) {
+                return -1;
+            }
+            *pte = K2P(new_page) | PTE_USER_DATA;
+            arch_tlbi_vmalle1is();
+        }
+
+        char *page_addr = (char *)P2K(PTE_ADDRESS(*pte));
+        u32 offset_in_page = va_offset - va_page_base;
+        usize copy_count = MIN(PAGE_SIZE - offset_in_page, len);
+
+        memcpy(page_addr + offset_in_page, source, copy_count);
+        len -= copy_count;
+        source += copy_count;
+        va_offset += copy_count;
+    }
+
+    return 0;
     /* (Final) TODO END */
 }

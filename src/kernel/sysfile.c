@@ -73,20 +73,20 @@ define_syscall(ioctl, int fd, u64 request)
     return 0;
 }
 
-define_syscall(mmap, void *addr, int length, int prot, int flags, int fd,
-               int offset)
-{
-    /* (Final) TODO BEGIN */
+// define_syscall(mmap, void *addr, int length, int prot, int flags, int fd,
+//                int offset)
+// {
+//     /* (Final) TODO BEGIN */
     
-    /* (Final) TODO END */
-}
+//     /* (Final) TODO END */
+// }
 
-define_syscall(munmap, void *addr, size_t length)
-{
-    /* (Final) TODO BEGIN */
+// define_syscall(munmap, void *addr, size_t length)
+// {
+//     /* (Final) TODO BEGIN */
     
-    /* (Final) TODO END */
-}
+//     /* (Final) TODO END */
+// }
 
 define_syscall(dup, int fd)
 {
@@ -448,10 +448,10 @@ define_syscall(chdir, const char *path)
     /* (Final) TODO END */
 }
 
-define_syscall(pipe2, int pipefd[2], int flags)
-{
+// define_syscall(pipe2, int pipefd[2], int flags)
+// {
 
-    /* (Final) TODO BEGIN */
+//     /* (Final) TODO BEGIN */
     
-    /* (Final) TODO END */
-}
+//     /* (Final) TODO END */
+// }

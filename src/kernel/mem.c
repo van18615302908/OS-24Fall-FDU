@@ -3,262 +3,356 @@
 #include <common/spinlock.h>
 #include <driver/memlayout.h>
 #include <kernel/mem.h>
-#include <common/list.h>
 #include <kernel/printk.h>
-#define ALIGN_UP(x, align) (((x) + (align) - 1) & ~((align) - 1))
+#include <common/string.h>
+
+// Reference: https://stackoverflow.com/questions/4840410/how-to-align-a-pointer-in-c
+#define ALIGN_UP_PTR(addr, size) (void *)(((usize)(addr) + (size - 1)) & (-size))
+#define ALIGN_DOWN_PTR(addr, size) (void *)(((usize)(addr)) & (-size))
+
+#define MIN_SIZE 8
+
 RefCount kalloc_page_cnt;
+static SpinLock page_lock, block_lock;
+static int total_page_cnt;
 
-int debug = 0;
+extern char end[];
+static char *pages_start;
+static void *zero_page = NULL;
 
-#define MAX_SIZE 1000
+// TODO: This shouldn't be hardcoded
+#define MAX_PAGE_COUNT 262000
 
-// 定义一个空闲页结构，包含 ListNode
-typedef struct FreePage {
-    ListNode node;  // 使用 ListNode 来管理空闲页
-} FreePage;
+static struct page pages[MAX_PAGE_COUNT];
 
+// Block sizes, in bytes
+const int block_sizes[] = { 8, 16, 32, 64, 128, 256, 512, 1024, 2048 };
 
+typedef struct __page_header {
+    struct __page_header *next, *prev;
+    int filled_blocks;
+    // u16 id;
+    int tier;
+    char *free_block;
+    // bool allocated;
+} page_header;
 
+// List of unallocated pages
+static page_header *free_list = NULL;
+// List of pages that are already allocated, but still have empty blocks
+static page_header *partial_list[9] = { NULL };
 
-//储存用slab
-typedef struct slab
+void init_pages()
 {
-    struct slab* next; // 指向下一个内存块
-}slab;
+    pages_start = ALIGN_UP_PTR(end, PAGE_SIZE);
 
+    // Stop addr in kernel space
+    char *kernel_stop = (char *)P2K(PHYSTOP);
+    for (char *i = pages_start; i + PAGE_SIZE <= kernel_stop; i += PAGE_SIZE) {
+        page_header *p_header = (page_header *)i;
 
-//储存slab的链表
-typedef struct slabs{
-    int size;
-    int num;
-    struct slabs* next;
-    struct slab* slab_node;
-}slabs;
-
-//储存页的数组
-typedef struct SlabList{
-    struct Slabs* head;
-} SlabList;
-
-SlabList slabs_list_glo[MAX_SIZE];
-
-// 空闲页链表的头指针
-static ListNode free_pages_list;
-
-// 自旋锁，防止并发问题
-static SpinLock mem_lock;
-static SpinLock mem_lock_block;
-
-extern char end[];  // 内核结束地址，空闲页从此地址之后开始
-
-
-
-void kinit() {
-    init_rc(&kalloc_page_cnt);  // 初始化页面计数器，！不许修改！
-
-    init_spinlock(&mem_lock);   // 初始化自旋锁
-    init_list_node(&free_pages_list);  // 初始化空闲页链表头
-
-    // 将 PHYSTOP 转换为内核虚拟地址，这样就可以与 page 比较
-    char* phystop_vaddr = (char*)P2K(PHYSTOP);
-
-
-    // 初始化空闲页链表
-    char* page = (char*)ALIGN_UP((unsigned long)end, PAGE_SIZE);// 从 end 开始，向上对齐到 PAGE_SIZE
-
-
-    for (; page + PAGE_SIZE <= phystop_vaddr; page += PAGE_SIZE) {
-        kfree_page(page);  // 将每个页面放入空闲链表中
-    }
-
-}
-
-void* kalloc_page() {
-    
-    acquire_spinlock(&mem_lock);  // 获取自旋锁，防止并发问题
-
-
-
-    if (free_pages_list.next == &free_pages_list) {
-        // 空闲链表为空，无法分配页面
-        release_spinlock(&mem_lock);
-        return NULL;
-    }
-
-
-    ListNode* node = _detach_from_list(free_pages_list.next);  // 先移除节点
-
-    FreePage* page = (FreePage*)node;  // 将移除的节点转换为 FreePage 类型
-
-
-    // 检查页面地址是否对齐
-    if ((u64)page & (PAGE_SIZE - 1)) {
-        release_spinlock(&mem_lock);
-        // printk("kalloc_page:返回未对齐的页面地址 %p\n", page);
-        return NULL;
-    }
-    // 打印当前和接下来的十个next元素
-    if (debug)
-    {
-        ListNode* current = free_pages_list.next;
-        printk("kalloc_page_distribution: free_pages_list.next=%p\n", current);
-
-        for (int i = 0; i < 10 && current != &free_pages_list; i++) {
-            current = current->next;
-            printk("Next element %d: %p %p\n", i + 1, current, &current);
+        if (free_list) {
+            free_list->prev = p_header;
         }
+        // p_header->id = index;
+        // p_header->allocated = false;
+        p_header->next = free_list;
+        free_list = p_header;
+
+        init_rc(&pages[total_page_cnt++].ref);
     }
 
-    increment_rc(&kalloc_page_cnt);  // 更新分配页面计数
-
-    release_spinlock(&mem_lock);  // 释放自旋锁
-
-    return (void*)page;
+    // printk("Page start addr: %llu, registered pages: %d\n", (usize)pages_start,
+    //        index);
+    // printk("Size of header: %llu\n", sizeof(page_header));
 }
 
-void kfree_page(void* p) {
-    if (p == NULL) {
+void kinit()
+{
+    init_rc(&kalloc_page_cnt);
+    init_spinlock(&page_lock);
+    init_spinlock(&block_lock);
+
+    init_pages();
+}
+
+u64 left_page_cnt()
+{
+    return total_page_cnt - kalloc_page_cnt.count;
+}
+
+void *kalloc_page()
+{
+    acquire_spinlock(&page_lock);
+    page_header *p_page = free_list;
+    if (!p_page) {
+        release_spinlock(&page_lock);
+        return NULL;
+    }
+
+    free_list = p_page->next;
+    if (free_list) {
+        free_list->prev = NULL;
+    }
+    p_page->next = p_page->prev = NULL;
+
+    u32 page_index = ((char *)p_page - pages_start) / PAGE_SIZE;
+    ASSERT(pages[page_index].ref.count == 0);
+    increment_rc(&pages[page_index].ref);
+
+    increment_rc(&kalloc_page_cnt);
+    release_spinlock(&page_lock);
+
+    return p_page;
+}
+
+void kfree_page(void *p)
+{
+    // Insert into free list
+    acquire_spinlock(&page_lock);
+
+    u32 page_index = ((char *)p - pages_start) / PAGE_SIZE;
+    ASSERT(pages[page_index].ref.count > 0);
+    decrement_rc(&pages[page_index].ref);
+    // Not the last user of this page, just return
+    if (pages[page_index].ref.count > 0) {
+        release_spinlock(&page_lock);
         return;
     }
 
-    acquire_spinlock(&mem_lock);  // 获取自旋锁，防止并发问题
-    
+    // Zero page shouldn't have been cleaned
+    ASSERT(p != zero_page);
+    // printk("Freeing page %u\n", page_index);
 
-    // 将释放的页面重新插入到空闲链表中
-    FreePage* page = (FreePage*)p;
-    _insert_into_list(&free_pages_list, &page->node);
+    page_header *p_page = p;
+    if (free_list) {
+        free_list->prev = p_page;
+    }
 
+    // p_page->allocated = false;
+    p_page->filled_blocks = 0;
+    p_page->free_block = NULL;
+    p_page->prev = NULL;
+    p_page->next = free_list;
+    free_list = p_page;
 
-    decrement_rc(&kalloc_page_cnt);  // 更新页面计数
+    decrement_rc(&kalloc_page_cnt);
+    release_spinlock(&page_lock);
 
-    release_spinlock(&mem_lock);  // 释放自旋锁
+    return;
 }
 
-
-//切分版本
-void* kalloc(unsigned long long size) {
-
-    // 对齐大小，确保最小对齐到 8 字节
-    size = ALIGN_UP(size, 8);
-    int size_need = size;//需要的大小
-
-    // 获取自旋锁，防止并发问题
-    acquire_spinlock(&mem_lock_block);
-
-    start_loop:
-    slabs* new_slabs = (slabs*)slabs_list_glo[size_need / 8 - 1].head;
-    start_inner_loop:
-    
-    while (new_slabs) {
-
-        if(new_slabs->size != size_need){
-            //大小不匹配
-            new_slabs = new_slabs->next;
-            goto start_inner_loop;
-        }
-
-        slab* current_slab = new_slabs->slab_node;
-
-        if(current_slab){
-            new_slabs->slab_node = current_slab->next;
-            release_spinlock(&mem_lock_block);
-            new_slabs->num--;
-            // printk("kalloc 成功: %d\n", size_need);
-            return current_slab;
-        }
-        //这一页没有空闲slab
-        new_slabs = new_slabs->next;
-        goto start_inner_loop;
+// Get full pages out of partial_list
+void remove_from_list(page_header *p_page)
+{
+    if (p_page->prev) {
+        p_page->prev->next = p_page->next;
+    } else {
+        partial_list[p_page->tier] = p_page->next;
     }
 
-    //没有合适的slabs，需要重新分配
-    void* page = kalloc_page();
-    // printk("kalloc_page: %p\n", page);
-    debug = 0;
-    if (!page) {
-        return NULL;  // 分配失败
+    if (p_page->next) {
+        p_page->next->prev = p_page->prev;
     }
 
-
-    //初始化slabs
-    new_slabs = (slabs*)page;
-    // new_slabs->next = slabs_list;
-    new_slabs->size = size_need;
-
-    slab* head = (slab*)((char*)new_slabs + sizeof(slabs));
-    slab* current = head;
-    int k = 0;
-    while ((char*)current + 2*size_need < (char*)page + PAGE_SIZE) {
-        current->next = (slab*)((char*)current + size_need);
-        current = current->next;
-        k++;
-    }
-
-    current->next = NULL; // 确保链表的最后一个节点指向 NULL
-    new_slabs->slab_node = head;
-    new_slabs->num = k;
-    
-
-    //将slabs插入到slabs_list
-    int index = size_need / 8 - 1;
-    
-    slabs* slps_head = (slabs*)slabs_list_glo[index].head;
-    new_slabs->next = slps_head; 
-    slabs_list_glo[index].head = (struct Slabs *)new_slabs;
-
-    goto start_loop;
-
-    return NULL;
-
+    p_page->prev = p_page->next = NULL;
 }
 
+// Add page to list if they get partially-full
+void add_to_list(page_header *p_page)
+{
+    int tier = p_page->tier;
+    if (partial_list[tier]) {
+        partial_list[tier]->prev = p_page;
+    }
 
+    p_page->next = partial_list[tier];
+    p_page->prev = NULL;
+    partial_list[tier] = p_page;
+}
 
+// Debug code, to check if the linked list works properly
+void __walk_list(page_header *lk)
+{
+    page_header *pg = lk, *prev_pg = NULL;
+    int cnt = 0;
+    while (pg != NULL) {
+        prev_pg = pg;
+        pg = pg->next;
+        cnt++;
+    }
 
-void kfree(void* ptr) {
+    printk("Forward walk, found %d pages!\n", cnt);
+    cnt = 1;
 
+    pg = prev_pg;
+    while (pg != lk) {
+        pg = pg->prev;
+        cnt++;
+    }
+
+    printk("Backward walk, found %d pages!\n", cnt);
+}
+
+int __count_free_blocks(char *free_blk_ptr)
+{
+    int counter = 0;
+    while (free_blk_ptr) {
+        free_blk_ptr = *((char **)free_blk_ptr);
+        counter++;
+    }
+
+    return counter;
+}
+
+// Initialize a page to become a container of blocks of a certain size
+void setup_page(page_header *p_page, int tier)
+{
+    /*
+    if (p_page->allocated) {
+        printk("PANIC: page %d re-allcated!\n", p_page->id);
+    }
+    */
+
+    p_page->tier = tier;
+    p_page->free_block = NULL;
+    p_page->filled_blocks = 0;
+    // p_page->allocated = true;
+    p_page->next = p_page->prev = NULL;
+
+    // Insert page into the partial list of the block size
+    add_to_list(p_page);
+
+    const u64 block_size = block_sizes[tier];
+    char *payload_start = ((char *)p_page) + sizeof(page_header);
+    // Align to 8
+    payload_start = ALIGN_UP_PTR(payload_start, 8);
+
+    const char *upper_bound = (char *)p_page + PAGE_SIZE;
+    for (char *i = payload_start; i + block_size < upper_bound;
+         i += block_size) {
+        *((char **)i) = p_page->free_block;
+        p_page->free_block = i;
+    }
+}
+
+// Get the block size tier of the given size
+int get_tier(unsigned long long size)
+{
+    // Ceil size to power of 2
+    int leading_zeros = __builtin_clzll(size - 1);
+    size = 0x8000000000000000 >> (leading_zeros - 1);
+
+    // Map size to tier by `tier = log2(size) - 3` (ctz is a fast equivalent to log2)
+    int trailing_zeros = __builtin_ctzll(size);
+    return MAX(0, trailing_zeros - 3);
+}
+
+void *kalloc(unsigned long long size)
+{
+    if (size == 0) {
+        // Cannot allocate zero size
+        return NULL;
+    }
+
+    if (size > 2048) {
+        printk("PANIC: %llu is larger than 2048. \n", size);
+        return NULL;
+    }
+
+    int tier = get_tier(size);
+    acquire_spinlock(&block_lock);
+
+    page_header *p_page = partial_list[tier];
+    // No empty list
+    if (!p_page) {
+        p_page = kalloc_page();
+        if (!p_page) {
+            printk("PANIC: cannot alloc page for tier %d, used pages: %lld, returning NULL\n",
+                   tier, kalloc_page_cnt.count);
+            return NULL;
+        }
+
+        setup_page(p_page, tier);
+    }
+
+    if (p_page->tier != tier) {
+        printk("PANIC: tier mismatch, wanted %d, given %d\n", tier,
+               p_page->tier);
+    }
+
+    void *addr = p_page->free_block;
+    if (!addr) {
+        printk("PANIC: full page in partial list\n");
+    }
+    p_page->free_block = *((char **)addr);
+
+    p_page->filled_blocks++;
+    if (!p_page->free_block) {
+        remove_from_list(p_page);
+    }
+
+    release_spinlock(&block_lock);
+    return addr;
+}
+
+void kfree(void *ptr)
+{
     if (!ptr) {
-        // 释放空指针，直接返回
+        printk("(warn) freeing NULL pointer\n");
         return;
     }
 
+    acquire_spinlock(&block_lock);
+    page_header *p_page = ALIGN_DOWN_PTR(ptr, PAGE_SIZE);
 
-
-    // 获取自旋锁，防止并发问题
-    acquire_spinlock(&mem_lock_block);
-
-    slabs* return_slabs = (slabs*)(round_down((u64)ptr, PAGE_SIZE));
-
-    slab* head = return_slabs->slab_node;
-    slab* current = (slab*)ptr;
-    current->next = head;
-    return_slabs->slab_node = current;
-    return_slabs->num++;
-    if(return_slabs->num == (int)(PAGE_SIZE - sizeof(return_slabs))/return_slabs->size - 1){
-        //这一页的slab全部被释放
-        slabs* current_slabs = (slabs*)slabs_list_glo[return_slabs->size / 8 - 1].head;
-        slabs* pre_slabs = NULL;
-        while (current_slabs)
-        {
-            if(current_slabs == return_slabs){
-                if(pre_slabs){
-                    pre_slabs->next = current_slabs->next;
-                }else{
-                    slabs_list_glo[return_slabs->size / 8 - 1].head = (struct Slabs *)current_slabs->next;
-                }
-                break;
-            }
-            pre_slabs = current_slabs;
-            current_slabs = current_slabs->next;
-        }
-        kfree_page(return_slabs);
+    // The page has empty space again after free, add back to partial list
+    if (!p_page->free_block) {
+        add_to_list(p_page);
     }
 
-    // 释放自旋锁
-    release_spinlock(&mem_lock_block);
+    *((char **)ptr) = p_page->free_block;
+    p_page->free_block = ptr;
 
+    p_page->filled_blocks--;
+    if (p_page->filled_blocks <= 0) {
+        // Remove from partial list, and then free page
+        remove_from_list(p_page);
+        // p_page->allocated = false;
+        kfree_page(p_page);
+    }
+
+    release_spinlock(&block_lock);
+    return;
 }
 
-void* get_zero_page() {
-    return NULL;
+// Increment the ref count of the page
+void *share_page(void *ptr)
+{
+    // Reference counting is not applicable to shared zero page
+    if (ptr == zero_page) {
+        return ptr;
+    }
+
+    u32 page_index = ((char *)ptr - pages_start) / PAGE_SIZE;
+    ASSERT(pages[page_index].ref.count > 0);
+    increment_rc(&pages[page_index].ref);
+    // printk("Ref to page %u is now %d\n", page_index, pages[page_index].ref.count);
+
+    return ptr;
+}
+
+WARN_RESULT void *get_zero_page()
+{
+    // TODO
+    if (!zero_page) {
+        zero_page = kalloc_page();
+        memset(zero_page, 0, PAGE_SIZE);
+
+        // Set rc to a very large number to ensure that this page will never be freed
+        u32 page_index = ((char *)zero_page - pages_start) / PAGE_SIZE;
+        pages[page_index].ref.count = __INT_MAX__;
+    }
+
+    return zero_page;
 }

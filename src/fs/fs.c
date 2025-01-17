@@ -9,9 +9,14 @@
 
 void init_filesystem() {
     init_block_device();
+    printk("init_block_device done\n");
 
     const SuperBlock* sblock = get_super_block();
+    printk("get_super_block done\n");
     init_bcache(sblock, &block_device);
+    printk("init_bcache done\n");
     init_inodes(sblock, &bcache);
+    printk("init_inodes done\n");
     init_ftable();
+    printk("init_ftable done\n");
 }

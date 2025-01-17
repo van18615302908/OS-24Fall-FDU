@@ -43,20 +43,51 @@ void syscall_entry(UserContext *context)
  * Check if the virtual address [start,start+size) is READABLE by the current
  * user process.
  */
-bool user_readable(const void *start, usize size) {
+bool user_readable(const void *start, usize size)
+{
     /* (Final) TODO BEGIN */
+    Proc *this = thisproc();
 
+    ListNode *node = this->pgdir.section_head.next;
+    while (node != &this->pgdir.section_head) {
+        struct section *section = container_of(node, struct section, stnode);
+        // Search for a section that fully encloses the address range (forbid striding across multiple sections)
+        if (section->begin <= (u64)start && section->end >= (u64)start + size) {
+            // Sections are all readable
+            return true;
+        }
+
+        node = node->next;
+    }
+
+    // No section corresponds to the address given
+    return false;
     /* (Final) TODO END */
 }
-
 
 /**
  * Check if the virtual address [start,start+size) is READABLE & WRITEABLE by
  * the current user process.
  */
-bool user_writeable(const void *start, usize size) {
+bool user_writeable(const void *start, usize size)
+{
     /* (Final) TODO Begin */
+    Proc *this = thisproc();
 
+    ListNode *node = this->pgdir.section_head.next;
+    while (node != &this->pgdir.section_head) {
+        struct section *section = container_of(node, struct section, stnode);
+        // Search for a section that fully encloses the address range (forbid striding across multiple sections)
+        if (section->begin <= (u64)start && section->end >= (u64)start + size) {
+            // Only of section is writable
+            return (section->flags & ST_RO) == 0;
+        }
+
+        node = node->next;
+    }
+
+    // No section corresponds to the address given
+    return false;
     /* (Final) TODO End */
 }
 

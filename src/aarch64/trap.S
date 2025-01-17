@@ -2,10 +2,11 @@
 #define popp(a, b) ldp a, b, [sp], #0x10 
 
 /* `exception_vector.S` send all traps here. */
+
 .global trap_entry
 trap_entry:
-// TODO
-pushp(x30, x30)
+// TODO: save UserContext
+// Save general-purpose registers
 pushp(x28, x29)
 pushp(x26, x27)
 pushp(x24, x25)
@@ -21,25 +22,45 @@ pushp(x6, x7)
 pushp(x4, x5)
 pushp(x2, x3)
 pushp(x0, x1)
-mrs x0, sp_el0
-mrs x1, tpidr_el0
-pushp(x0, x1)
-mrs x0, spsr_el1
-mrs x1, elr_el1
-pushp(x0, x1)
+
+// Push lr and reserve 8 bytes
+pushp(lr, x0)
+
+// Now use the general registers to transfer system registers
+mrs x1, spsr_el1
+mrs x2, elr_el1
+mrs x3, tpidr_el0
+mrs x4, sp_el0
+pushp(x1, x2)
+pushp(x3, x4)
+
+// Store q0
 str q0, [sp, #-0x10]!
+
+// Return the address to the user context
 mov x0, sp
+
 bl trap_global_handler
+
 .global trap_return
 trap_return:
-// TODO
+// TODO: restore UserContext
+
+// Restore q0
 ldr q0, [sp], #0x10
-popp(x0, x1)
-msr spsr_el1, x0
-msr elr_el1, x1
-popp(x0, x1)
-msr sp_el0, x0
-msr tpidr_el0, x1
+
+// Pop system registers
+popp(x3, x4)
+popp(x1, x2)
+msr tpidr_el0, x3
+msr sp_el0, x4
+msr spsr_el1, x1
+msr elr_el1, x2
+
+// Pop lr and reserved 8 bytes
+popp(lr, x0)
+
+// Restore general-purpose registers
 popp(x0, x1)
 popp(x2, x3)
 popp(x4, x5)
@@ -55,5 +76,5 @@ popp(x22, x23)
 popp(x24, x25)
 popp(x26, x27)
 popp(x28, x29)
-popp(x30, x30)
+
 eret

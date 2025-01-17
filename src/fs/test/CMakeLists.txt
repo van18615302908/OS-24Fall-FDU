@@ -11,7 +11,7 @@ set(CMAKE_CXX_FLAGS   "-no-pie")
 set(CMAKE_C_FLAGS   "-no-pie")  
 include_directories(../..)
 
-set(compiler_warnings "-Wall -Wextra")
+set(compiler_warnings "-Wall -Wextra")#更改前为compiler_warnings "-Wall -Wextra"
 set(compiler_flags "${compiler_warnings} \
     -O1 -ftree-pre -g \
     -fno-omit-frame-pointer \
