@@ -38,21 +38,21 @@ NO_RETURN void kernel_entry()
     // proc_test();
     // vm_test();
     // user_proc_test();
-    io_test();
+    // io_test();
 
-    /* LAB 4 TODO 3 BEGIN */
-    Buf mbr_buf;
-    mbr_buf.block_no = 0;  // 读取 MBR
-    mbr_buf.flags = 0;     // 读取操作
-    virtio_blk_rw(&mbr_buf);  // 读取 MBR
+    // /* LAB 4 TODO 3 BEGIN */
+    // Buf mbr_buf;
+    // mbr_buf.block_no = 0;  // 读取 MBR
+    // mbr_buf.flags = 0;     // 读取操作
+    // virtio_blk_rw(&mbr_buf);  // 读取 MBR
 
-    // 解析第二分区信息
-    u8 *mbr_data = mbr_buf.data;
-    u32 second_partition_lba = *(u32 *)(mbr_data + 0x1CE + 0x8);  // 第二分区起始 LBA
-    u32 second_partition_size = *(u32 *)(mbr_data + 0x1CE + 0xC); // 第二分区大小
+    // // 解析第二分区信息
+    // u8 *mbr_data = mbr_buf.data;
+    // u32 second_partition_lba = *(u32 *)(mbr_data + 0x1CE + 0x8);  // 第二分区起始 LBA
+    // u32 second_partition_size = *(u32 *)(mbr_data + 0x1CE + 0xC); // 第二分区大小
 
-    printk("Second partition LBA: %u\n", second_partition_lba);//防止warning
-    printk("Second partition size: %u blocks\n", second_partition_size);   
+    // printk("Second partition LBA: %u\n", second_partition_lba);//防止warning
+    // printk("Second partition size: %u blocks\n", second_partition_size);   
     /* LAB 4 TODO 3 END */
 
     /**

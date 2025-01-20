@@ -115,6 +115,7 @@ int virtio_blk_rw(Buf *b)
     arch_fence();
 
     /* LAB 4 TODO 1 BEGIN */
+    // printk("virtio_blk_rw: waiting for disk operation to complete\n");
     while(!disk.virtq.info[d0].done){
         release_spinlock(&disk.lk);
         ASSERT(wait_sem(&b->sem));
@@ -130,8 +131,9 @@ int virtio_blk_rw(Buf *b)
 
 static void virtio_blk_intr()
 {
+    // printk("virtio_blk_intr: disk interrupt\n");
     acquire_spinlock(&disk.lk);
-
+    
     u32 intr_status = REG(VIRTIO_REG_INTERRUPT_STATUS);
     REG(VIRTIO_REG_INTERRUPT_ACK) = intr_status & 0x3;
 
@@ -144,7 +146,9 @@ static void virtio_blk_intr()
 
         /* LAB 4 TODO 2 BEGIN */
         disk.virtq.info[d0].done =1;
-        Buf *b =(Buf *)((u64)disk.virtq.info[d0].buf - sizeof(int));post_sem(&b->sem);    
+        Buf *b =(Buf *)((u64)disk.virtq.info[d0].buf - sizeof(int));
+        // printk("virtio_blk_intr: disk operation completed\n");
+        post_sem(&b->sem);    
         /* LAB 4 TODO 2 END */
 
         disk.virtq.info[d0].buf = NULL;

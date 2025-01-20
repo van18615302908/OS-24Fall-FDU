@@ -15,7 +15,9 @@ void console_init()
     /* (Final) TODO BEGIN */
     init_spinlock(&cons.lock);
     init_sem(&cons.sem, 0);
-    set_interrupt_handler(UART_IRQ,console_interrupt_handler);
+    // set_interrupt_handler(UART_IRQ,console_interrupt_handler);
+    
+    //bug
     /* (Final) TODO END */
 }
 
