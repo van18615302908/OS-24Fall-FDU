@@ -37,8 +37,21 @@ struct iovec {
 static struct file *fd2file(int fd)
 {
     /* (Final) TODO BEGIN */
-    if(fd < 0 || fd >= NOFILE)return NULL;
-    else return thisproc()->oftable.fp[fd];
+
+    Proc *this = thisproc();
+
+    // Avoid index out of bound
+    if (fd >= NFILE || fd < 0) {
+        return NULL;
+    }
+
+    File *file = this->oftable.files[fd];
+    if (file == NULL || file->type == FD_NONE) {
+        return NULL;
+    }
+
+    return file;
+
     /* (Final) TODO END */
 }
 
@@ -49,17 +62,18 @@ static struct file *fd2file(int fd)
 int fdalloc(struct file *f)
 {
     /* (Final) TODO BEGIN */
-        struct oftable* ft = &thisproc()->oftable;
-    int i = 0;
-    for(i = 0; i < NOFILE; i++){
-        if(ft->fp[i] == NULL){
-            ft->fp[i] = f;
-            break;
+
+    Proc *this = thisproc();
+    acquire_spinlock(&this->oftable.lock);
+    for (usize i = 0; i < NFILE_PROC; i++) {
+        if (this->oftable.files[i] == NULL) {
+            this->oftable.files[i] = f;
+            release_spinlock(&this->oftable.lock);
+            return i;
         }
     }
-    if(i < NOFILE){
-        return i;
-    }
+    release_spinlock(&this->oftable.lock);
+
     /* (Final) TODO END */
     return -1;
 }
@@ -73,20 +87,179 @@ define_syscall(ioctl, int fd, u64 request)
     return 0;
 }
 
-// define_syscall(mmap, void *addr, int length, int prot, int flags, int fd,
-//                int offset)
-// {
-//     /* (Final) TODO BEGIN */
-    
-//     /* (Final) TODO END */
-// }
+#define ALIGN_UP(addr, size) (((usize)(addr) + (size - 1)) & (-size))
+#define ALIGN_DOWN(addr, size) (((usize)(addr)) & (-size))
 
-// define_syscall(munmap, void *addr, size_t length)
-// {
-//     /* (Final) TODO BEGIN */
-    
-//     /* (Final) TODO END */
-// }
+define_syscall(mmap, void *addr, int length, int prot, int flags, int fd,
+               int offset)
+{
+    /* (Final) TODO BEGIN */
+    File *f = fd2file(fd);
+
+    if (!f) {
+        printk("(warn) mmap: file doesn't exist! \n");
+        return -1;
+    }
+
+    // Check permission
+    if ((prot & PROT_WRITE) && flags != MAP_PRIVATE && !f->writable) {
+        printk("(warn) mmap: creating shared writable mmap but file isn't writable! \n");
+        return -1;
+    }
+
+    Proc *this = thisproc();
+
+    acquire_spinlock(&this->pgdir.lock);
+    u64 begin, end;
+    if (!addr) {
+        // Start to search from 0x70000000, which is between heap and stack
+        bool valid = false;
+        begin = 0x70000000;
+        end = begin + length;
+
+        // Find unoccupied memory area
+        while (!valid) {
+            valid = true;
+            ListNode *node = this->pgdir.section_head.next;
+            while (node != &this->pgdir.section_head) {
+                struct section *section =
+                        container_of(node, struct section, stnode);
+                if (section->begin < end && section->end > begin) {
+                    begin = ALIGN_UP(section->end, PAGE_SIZE);
+                    end = begin + length;
+                    valid = false;
+                    break;
+                }
+
+                node = node->next;
+            }
+        }
+
+        if (!valid) {
+            release_spinlock(&this->pgdir.lock);
+            printk("(warn) cannot find appropriate space for mmap\n");
+            return -1;
+        }
+    } else {
+        begin = (u64)addr;
+        end = begin + length;
+
+        ListNode *node = this->pgdir.section_head.next;
+        while (node != &this->pgdir.section_head) {
+            struct section *section =
+                    container_of(node, struct section, stnode);
+            if (section->begin < end && section->end > begin) {
+                release_spinlock(&this->pgdir.lock);
+                printk("(warn) given address invalid since it intersects with existing sections\n");
+                return -1;
+            }
+        }
+    }
+
+    printk("Mapping file to %llu - %llu\n", begin, end);
+    struct section *map_section =
+            (struct section *)kalloc(sizeof(struct section));
+
+    map_section->begin = begin;
+    map_section->end = end;
+    map_section->flags =
+            (flags == MAP_PRIVATE ? ST_MMAP_PRIVATE : ST_MMAP_SHARED);
+    map_section->fp = file_dup(f);
+    map_section->offset = offset;
+    map_section->length = length;
+    map_section->prot = prot;
+
+    _insert_into_list(&this->pgdir.section_head, &map_section->stnode);
+    release_spinlock(&this->pgdir.lock);
+
+    return begin;
+    /* (Final) TODO END */
+}
+
+define_syscall(munmap, void *addr, size_t length)
+{
+    /* (Final) TODO BEGIN */
+    Proc *this = thisproc();
+    acquire_spinlock(&this->pgdir.lock);
+
+    // Find unoccupied memory area
+    struct section *mapped_section = NULL;
+    ListNode *node = this->pgdir.section_head.next;
+    while (node != &this->pgdir.section_head) {
+        struct section *section = container_of(node, struct section, stnode);
+        if (section->begin == (u64)addr) {
+            mapped_section = section;
+            break;
+        }
+
+        node = node->next;
+    }
+
+    if (!mapped_section || !mapped_section->fp) {
+        // No effect if mapping doesn't exist
+        release_spinlock(&this->pgdir.lock);
+        return 0;
+    }
+
+    bool free_whole_section = false;
+    if (length >= mapped_section->end - mapped_section->begin) {
+        length = mapped_section->end - mapped_section->begin;
+        free_whole_section = true;
+    }
+
+    // Only write back public mappings
+    if (mapped_section->flags == ST_MMAP_SHARED &&
+        (mapped_section->prot & PROT_WRITE)) {
+        write_back(&this->pgdir, mapped_section->fp, mapped_section->begin,
+                   mapped_section->offset, length);
+    }
+
+    u64 va = ALIGN_DOWN(mapped_section->begin, PAGE_SIZE);
+    if (free_whole_section) {
+        while (va < mapped_section->end) {
+            PTEntriesPtr pte = get_pte(&this->pgdir, va, false);
+            if (!pte) {
+                continue;
+            }
+
+            if (CHECK_DESCRIPTOR(*pte)) {
+                void *old_page = (void *)P2K(PTE_ADDRESS(*pte));
+                kfree_page(old_page);
+            }
+
+            *pte = 0;
+            va += PAGE_SIZE;
+        }
+
+        _detach_from_list(&mapped_section->stnode);
+        file_close(mapped_section->fp);
+        kfree(mapped_section);
+    } else {
+        while (va + PAGE_SIZE <= mapped_section->begin + length) {
+            PTEntriesPtr pte = get_pte(&this->pgdir, va, false);
+            if (!pte) {
+                continue;
+            }
+
+            if (CHECK_DESCRIPTOR(*pte)) {
+                void *old_page = (void *)P2K(PTE_ADDRESS(*pte));
+                kfree_page(old_page);
+            }
+
+            *pte = 0;
+            va += PAGE_SIZE;
+        }
+
+        mapped_section->begin += length;
+        mapped_section->offset += length;
+        mapped_section->length -= length;
+    }
+
+    arch_tlbi_vmalle1is();
+    release_spinlock(&this->pgdir.lock);
+    return 0;
+    /* (Final) TODO END */
+}
 
 define_syscall(dup, int fd)
 {
@@ -134,12 +307,15 @@ define_syscall(writev, int fd, struct iovec *iov, int iovcnt)
 define_syscall(close, int fd)
 {
     /* (Final) TODO BEGIN */
-    if(fd < 0 || fd >= NOFILE)return -1;
-    auto ft = &thisproc()->oftable;
-    if(ft->fp[fd]){
-        file_close(ft->fp[fd]);
-        ft->fp[fd] = NULL;
+    File *f = fd2file(fd);
+
+    if (f == NULL) {
+        return -1;
     }
+
+    thisproc()->oftable.files[fd] = 0;
+    file_close(f);
+
     /* (Final) TODO END */
     return 0;
 }
@@ -202,7 +378,7 @@ define_syscall(unlinkat, int fd, const char *path, int flag)
     Inode *ip, *dp;
     DirEntry de;
     char name[FILE_NAME_MAX_LENGTH];
-    usize off;
+    usize index;
     if (!user_strlen(path, 256))
         return -1;
     OpContext ctx;
@@ -219,7 +395,7 @@ define_syscall(unlinkat, int fd, const char *path, int flag)
         strncmp(name, "..", FILE_NAME_MAX_LENGTH) == 0)
         goto bad;
 
-    usize inumber = inodes.lookup(dp, name, &off);
+    usize inumber = inodes.lookup(dp, name, &index);
     if (inumber == 0)
         goto bad;
     ip = inodes.get(inumber);
@@ -234,7 +410,8 @@ define_syscall(unlinkat, int fd, const char *path, int flag)
     }
 
     memset(&de, 0, sizeof(de));
-    if (inodes.write(&ctx, dp, (u8 *)&de, off, sizeof(de)) != sizeof(de))
+    if (inodes.write(&ctx, dp, (u8 *)&de, sizeof(de) * index, sizeof(de)) !=
+        sizeof(de))
         PANIC();
     if (ip->entry.type == INODE_DIRECTORY) {
         dp->entry.num_links--;
@@ -277,49 +454,94 @@ Inode *create(const char *path, short type, short major, short minor,
               OpContext *ctx)
 {
     /* (Final) TODO BEGIN */
-    char name[FILE_NAME_MAX_LENGTH] = {0};
-    usize index;
-    Inode* parent = nameiparent(path, name, ctx);//获取父目录
-    if(!parent)return NULL;//如果父目录不存在，返回NULL
+
+    char name[FILE_NAME_MAX_LENGTH];
+
+    Inode *parent = nameiparent(path, name, ctx);
+    // Parent dir not found
+    if (!parent) {
+        return NULL;
+    }
     inodes.lock(parent);
-    //检查是否已经存在
-    usize ino = inodes.lookup(parent, name, &index);
-    if(ino){
+
+    usize inode_index = inodes.lookup(parent, name, NULL);
+    if (inode_index > 0) {
         inodes.unlock(parent);
         inodes.put(ctx, parent);
-        return inodes.get(ino);
-    }//如果已经存在，直接返回
-    else{
-        ino = inodes.alloc(ctx, type);
-        //分配失败
-        if(ino == 0){
+        Inode *target = inodes.get(inode_index);
+        inodes.lock(target);
+
+        // Check if type matches and if type is valid
+        if (type == target->entry.type) {
+            return target;
+        }
+
+        inodes.unlock(target);
+        inodes.put(ctx, target);
+        // Type mismatch or type invalid (only creating files and dirs are allowed)
+        return NULL;
+    }
+
+    inode_index = inodes.alloc(ctx, type);
+    if (inode_index == 0) {
+        printk("PANIC: failed to alloc inode\n");
+        inodes.unlock(parent);
+        inodes.put(ctx, parent);
+        return NULL;
+    }
+
+    Inode *target = inodes.get(inode_index);
+    inodes.lock(target);
+
+    target->entry.type = type;
+    target->entry.major = major;
+    target->entry.minor = minor;
+    target->entry.num_links = 1;
+    inodes.sync(ctx, target, true);
+
+    // Create `.` and `..`
+    if (type == INODE_DIRECTORY) {
+        if (inodes.insert(ctx, target, ".", target->inode_no) < 0 ||
+            inodes.insert(ctx, target, "..", parent->inode_no) < 0) {
+            printk("(warn) failed to alloc . or ..\n");
+
+            // Deconstruct parent
             inodes.unlock(parent);
             inodes.put(ctx, parent);
+
+            // Deconstruct self
+            inodes.clear(ctx, target);
+            inodes.unlock(target);
+            inodes.put(ctx, target);
             return NULL;
         }
-        //分配成功
-        Inode* node = inodes.get(ino);
-        inodes.lock(node);
-        node->entry.type = type;
-        node->entry.major = major;
-        node->entry.minor = minor;
-        node->entry.num_links = 1;
-        //写入磁盘
-        if(type == INODE_DIRECTORY){
-            node->entry.num_links++;
-            ASSERT(inodes.insert(ctx, node, ".", ino) != (usize)-1);
-            ASSERT(inodes.insert(ctx, node, "..", parent->inode_no) != (usize)-1);
-        }
-        //同步并释放资源
-        inodes.sync(ctx, node, true);
 
-        ASSERT(inodes.insert(ctx, parent, name, ino) != (usize)-1);
+        // We do not increment ref to self again for `.` to avoid circular ref
+        // Increment ref of parent due to `..`
+        parent->entry.num_links++;
+        inodes.sync(ctx, parent, true);
+    }
+
+    if (inodes.insert(ctx, parent, name, target->inode_no) < 0) {
+        printk("(warn) failed to append new entry to parent\n");
+
+        // Deconstruct parent
         inodes.unlock(parent);
         inodes.put(ctx, parent);
-        return node;
+
+        // Deconstruct self
+        inodes.clear(ctx, target);
+        inodes.unlock(target);
+        inodes.put(ctx, target);
+        return NULL;
     }
+
+    // Deconstruct parent
+    inodes.unlock(parent);
+    inodes.put(ctx, parent);
+    return target;
+
     /* (Final) TODO END */
-    return 0;
 }
 
 define_syscall(openat, int dirfd, const char *path, int omode)
@@ -397,7 +619,8 @@ define_syscall(mkdirat, int dirfd, const char *path, int mode)
     return 0;
 }
 
-define_syscall(mknodat, int dirfd, const char *path, mode_t mode, dev_t dev)
+define_syscall(mknodat, int dirfd, const char *path,
+               __attribute__((unused)) mode_t mode, dev_t dev)
 {
     Inode *ip;
     if (!user_strlen(path, 256))
@@ -430,28 +653,74 @@ define_syscall(chdir, const char *path)
      * Change the cwd (current working dictionary) of current process to 'path'.
      * You may need to do some validations.
      */
+
+    Proc *this = thisproc();
+
     OpContext ctx;
     bcache.begin_op(&ctx);
-    //获取inode
-    Inode* node = namei(path, &ctx);
-    if(node){
-        inodes.put(&ctx, thisproc()->cwd);
+
+    Inode *inode = namei(path, &ctx);
+    if (inode == NULL) {
         bcache.end_op(&ctx);
-        thisproc()->cwd = node;
-        return 0;
-    }
-    else {//可能会获取失败
-        bcache.end_op(&ctx);
-        printk("chdir: failed to change cwd\n");
         return -1;
     }
+
+    inodes.lock(inode);
+
+    // Must be directory
+    if (inode->entry.type != INODE_DIRECTORY) {
+        inodes.unlock(inode);
+        inodes.put(&ctx, inode);
+        bcache.end_op(&ctx);
+        return -1;
+    }
+
+    inodes.unlock(inode);
+    inodes.put(&ctx, this->cwd);
+    bcache.end_op(&ctx);
+
+    this->cwd = inode;
+    return 0;
     /* (Final) TODO END */
 }
 
-// define_syscall(pipe2, int pipefd[2], int flags)
-// {
+define_syscall(pipe2, int pipefd[2], __attribute__((unused)) int flags)
+{
+    /* (Final) TODO BEGIN */
+    File *f0, *f1;
+    if (pipe_alloc(&f0, &f1) < 0) {
+        return -1;
+    }
 
-//     /* (Final) TODO BEGIN */
-    
-//     /* (Final) TODO END */
-// }
+    pipefd[0] = pipefd[1] = -1;
+    pipefd[0] = fdalloc(f0);
+    if (pipefd[0] < 0) {
+        goto failure;
+    }
+
+    pipefd[1] = fdalloc(f1);
+    if (pipefd[1] < 0) {
+        goto failure;
+    }
+
+    return 0;
+
+failure:
+    pipe_close(f0->pipe, 0);
+    pipe_close(f0->pipe, 1);
+
+    if (pipefd[0] >= 0) {
+        sys_close(pipefd[0]);
+    } else {
+        file_close(f0);
+    }
+
+    if (pipefd[1] >= 0) {
+        sys_close(pipefd[1]);
+    } else {
+        file_close(f1);
+    }
+
+    return -1;
+    /* (Final) TODO END */
+}

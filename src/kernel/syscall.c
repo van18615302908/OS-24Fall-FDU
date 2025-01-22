@@ -15,7 +15,6 @@ void init_syscall()
         ((void (*)()) * p)();
 }
 
-int debug_syscall = 0;
 void *syscall_table[NR_SYSCALL] = {
     [0 ... NR_SYSCALL - 1] = NULL,
     [SYS_myreport] = (void *)syscall_myreport,
@@ -23,20 +22,28 @@ void *syscall_table[NR_SYSCALL] = {
 
 void syscall_entry(UserContext *context)
 {
-    if(debug_syscall)printk("syscall_entry\n");
     // TODO
     // Invoke syscall_table[id] with args and set the return value.
     // id is stored in x8. args are stored in x0-x5. return value is stored in x0.
     // be sure to check the range of id. if id >= NR_SYSCALL, panic.
-    u64 id = 0, ret = 0;
-    id = context->x[8];
-    if(id >= NR_SYSCALL){
+    u64 id = context->x[8];
+
+    if (id >= NR_SYSCALL) {
         PANIC();
-    }else{
-        u64 (*p) (u64, u64, u64, u64, u64, u64) = syscall_table[id];
-        ret = p(context->x[0], context->x[1], context->x[2], context->x[3], context->x[4], context->x[5]);
-        context->x[0] = ret;
     }
+
+    // Get pointer to function
+    u64 (*func)(u64, u64, u64, u64, u64, u64) = syscall_table[id];
+    u64 ret = -1;
+    if (!func) {
+        printk("(warn) invalid syscall id %llu\n", id);
+    } else {
+        ret = func(context->x[0], context->x[1], context->x[2], context->x[3],
+                   context->x[4], context->x[5]);
+    }
+
+    // Store return value in x0
+    context->x[0] = ret;
 }
 
 /** 
@@ -96,7 +103,8 @@ bool user_writeable(const void *start, usize size)
  * current user process return 0 if the length exceeds maxlen or the string is
  * not readable by the current user process.
  */
-usize user_strlen(const char *str, usize maxlen) {
+usize user_strlen(const char *str, usize maxlen)
+{
     for (usize i = 0; i < maxlen; i++) {
         if (user_readable(&str[i], 1)) {
             if (str[i] == 0)
@@ -106,4 +114,3 @@ usize user_strlen(const char *str, usize maxlen) {
     }
     return 0;
 }
-#pragma GCC diagnostic pop//?

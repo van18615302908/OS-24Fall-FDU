@@ -3,133 +3,212 @@
 #include <common/spinlock.h>
 #include <common/sem.h>
 #include <fs/inode.h>
-#include <common/list.h>
 #include <fs/pipe.h>
+#include <common/list.h>
 #include <kernel/mem.h>
+#include <kernel/printk.h>
+#include <common/string.h>
 
 // the global file table.
 static struct ftable ftable;
 
-void init_ftable() {
+void init_ftable()
+{
     // TODO: initialize your ftable.
     init_spinlock(&ftable.lock);
+
+    // Mark all slots as empty
+    for (usize i = 0; i < NFILE; i++) {
+        ftable.files[i].ref = 0;
+        ftable.files[i].type = FD_NONE;
+    }
 }
 
-void init_oftable(struct oftable *oftable) {
+void init_oftable(struct oftable *oftable)
+{
     // TODO: initialize your oftable for a new process.
-    for(int i=0; i<NOFILE; i++){
-        oftable->fp[i] = NULL;
-    }
+    init_spinlock(&oftable->lock);
+    memset(&oftable->files, 0, sizeof(oftable->files));
 }
 
 /* Allocate a file structure. */
-struct file* file_alloc() {
+struct file *file_alloc()
+{
     /* (Final) TODO BEGIN */
+
     acquire_spinlock(&ftable.lock);
-    for(int i=0; i<NOFILE; i++){
-        if(ftable.file[i].ref <= 0){
-            ftable.file[i].ref = 1;
+
+    // Find slot and return
+    for (usize i = 0; i < NFILE; i++) {
+        if (ftable.files[i].ref == 0 && ftable.files[i].type == FD_NONE) {
+            ftable.files[i].ref++;
             release_spinlock(&ftable.lock);
-            return &ftable.file[i];
+            return &ftable.files[i];
         }
     }
     release_spinlock(&ftable.lock);
+
     /* (Final) TODO END */
-    return 0;
+    printk("PANIC: No file slot left! \n");
+    return NULL;
 }
 
 /* Increment ref count for file f. */
-struct file* file_dup(struct file* f) {
+struct file *file_dup(struct file *f)
+{
     /* (Final) TODO BEGIN */
+
     acquire_spinlock(&ftable.lock);
+    ASSERT(f->ref > 0);
     f->ref++;
     release_spinlock(&ftable.lock);
+
     /* (Final) TODO END */
     return f;
 }
 
 /* Close file f. (Decrement ref count, close when reaches 0.) */
-void file_close(struct file* f) {
+void file_close(struct file *f)
+{
     /* (Final) TODO BEGIN */
+
     acquire_spinlock(&ftable.lock);
+    ASSERT(f->ref > 0);
     f->ref--;
-    if(f->ref == 0){
-        if(f->type == FD_INODE){
-            Inode* inode = f->ip;
-            f->type = FD_NONE;
-            release_spinlock(&ftable.lock);
-            OpContext ctx;
-            bcache.begin_op(&ctx);
-            inodes.put(&ctx, inode);
-            bcache.end_op(&ctx);
-        }else if(f->type == FD_PIPE){
-            pipe_close(f->pipe, f->writable);
-            release_spinlock(&ftable.lock);
-        }
+
+    if (f->ref > 0) {
+        release_spinlock(&ftable.lock);
         return;
     }
-    release_spinlock(&ftable.lock);
+
+    // Recycle file
+    ASSERT(f->ref == 0);
+    auto file_type = f->type;
+    f->type = FD_NONE;
+
+    // Obtain the handle, then release the lock, to avoid the handle from being overwritten
+    switch (file_type) {
+    case FD_PIPE: {
+        struct pipe *pipe = f->pipe;
+        // A pipe file could only be either readable or writable, but cannot be both
+        ASSERT(f->readable ^ f->writable);
+        release_spinlock(&ftable.lock);
+        pipe_close(pipe, f->writable);
+    } break;
+    case FD_INODE: {
+        Inode *inode = f->ip;
+        release_spinlock(&ftable.lock);
+
+        // Deconstruct inode
+        OpContext ctx;
+        bcache.begin_op(&ctx);
+        // Have to guarantee that the inode is unlocked
+        inodes.put(&ctx, inode);
+        bcache.end_op(&ctx);
+    } break;
+    default:
+        release_spinlock(&ftable.lock);
+        break;
+    }
+
     /* (Final) TODO END */
 }
 
 /* Get metadata about file f. */
-int file_stat(struct file* f, struct stat* st) {
+int file_stat(struct file *f, struct stat *st)
+{
     /* (Final) TODO BEGIN */
-    if(f->type == FD_INODE){
+    if (f->type == FD_INODE) {
+        ASSERT(f->ip != NULL);
         inodes.lock(f->ip);
         stati(f->ip, st);
         inodes.unlock(f->ip);
         return 0;
     }
+
     /* (Final) TODO END */
+    printk("WARNING: Getting stat of non-inode file\n");
     return -1;
 }
 
 /* Read from file f. */
-isize file_read(struct file* f, char* addr, isize n) {
+isize file_read(struct file *f, char *addr, isize n)
+{
     /* (Final) TODO BEGIN */
-    if(f->type == FD_INODE && f->readable){
+    if (!f->readable) {
+        printk("(warn) Reading unreadable file\n");
+        return -1;
+    }
+
+    switch (f->type) {
+    case FD_INODE: {
+        ASSERT(f->ip != NULL);
         inodes.lock(f->ip);
-        n = inodes.read(f->ip, (u8*)addr, f->off, n);
-        f->off += n;
+        usize bytes_read = inodes.read(f->ip, (u8 *)addr, f->off, n);
+        f->off += bytes_read;
         inodes.unlock(f->ip);
-        return n;
-    }else if(f->type == FD_PIPE && f->readable){
+        return bytes_read;
+    } break;
+    case FD_PIPE: {
         return pipe_read(f->pipe, (u64)addr, n);
-    }  
+    } break;
+    default:
+        break;
+    }
+
     /* (Final) TODO END */
     return 0;
 }
 
 /* Write to file f. */
-isize file_write(struct file* f, char* addr, isize n) {
-    /* (Final) TODO */
-    if(!f->writable || f->type == FD_NONE || n < 0)return -1;
-    isize ret = 0;
-    if(f->type == FD_INODE){
-        ASSERT(f->ip->inode_no > 9);
-        usize max_input = MIN(INODE_MAX_BYTES - f->off, (usize)n);
-        usize n_w = 0;
-        while(n_w != max_input){
-            ASSERT(n_w <= max_input);//防止死循环
-            usize this = MIN(max_input - n_w, (usize)(OP_MAX_NUM_BLOCKS * BLOCK_SIZE / 2));
+isize file_write(struct file *f, char *addr, isize n)
+{
+    /* (Final) TODO BEGIN */
+    if (!f->writable) {
+        printk("(warn) Writing unwritable file\n");
+        return -1;
+    }
+
+    switch (f->type) {
+    case FD_INODE: {
+        ASSERT(f->ip != NULL);
+
+        inodes.lock(f->ip);
+        usize bytes_written = 0;
+        // If the write count is too large, we have to split it into multiple atomic ops
+        while (n > 0) {
             OpContext ctx;
             bcache.begin_op(&ctx);
-            inodes.lock(f->ip);
-            if(inodes.write(&ctx, f->ip, (u8*)(addr + n_w), f->off, this) != this){
-                inodes.unlock(f->ip);
-                bcache.end_op(&ctx);
-                return -1;
-            };
-            inodes.unlock(f->ip);
+            // A write to data block would take up to 2 syncs, updating the inode itself costs one sync,
+            // and writing `n * BLOCK_SIZE` of data would take up to `n + 1` data block writes,
+            // so the maximum number of blocks safe to submit within one `OpContext` is given as followed
+            u64 should_write =
+                    MIN(n, ((OP_MAX_NUM_BLOCKS - 1) / 2 - 1) * BLOCK_SIZE);
+            u64 count =
+                    inodes.write(&ctx, f->ip, (u8 *)addr, f->off, should_write);
+
             bcache.end_op(&ctx);
-            f->off += this;
-            n_w += this;
-            ret += this;
+            bytes_written += count;
+            n -= count;
+            f->off += count;
+
+            if (count != should_write) {
+                printk("(warn) cannot write file, terminating\n");
+                break;
+            }
         }
+
+        inodes.unlock(f->ip);
+        return bytes_written;
+    } break;
+    case FD_PIPE: {
+        // TODO: pipe write
+        return pipe_write(f->pipe, (u64)addr, n);
+    } break;
+    default:
+        break;
     }
-    else if(f->type == FD_PIPE){
-        ret = pipe_write(f->pipe, (u64)addr, n);
-    }
-    return ret;
+
+    /* (Final) TODO END */
+    return 0;
 }

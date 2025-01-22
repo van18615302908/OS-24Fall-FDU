@@ -9,6 +9,7 @@
 #include <kernel/pid.h>
 #include <kernel/pt.h>
 
+
 Proc root_proc;
 int debug_proc = 0;
 
@@ -52,6 +53,7 @@ void init_proc(Proc *p)
     init_sem(&p->childexit, 0);
     init_schinfo(&p->schinfo);
     init_pgdir(&p->pgdir);
+    init_sections(&p->pgdir.section_head);
     release_spinlock(&global_process_lock);
 }
 
@@ -247,7 +249,7 @@ int kill(int pid)
 void trap_return();
 int fork()
 {
-    /**
+   /**
      * (Final) TODO BEGIN
      * 
      * 1. Create a new child process.
@@ -277,13 +279,13 @@ int fork()
     new_proc->ucontext->x[0] = 0;
 
     // Copy oftable
-    for (u64 i = 0; i < 32; i++) {
-        if (this->oftable.fp[i]) {
-            new_proc->oftable.fp[i] = file_dup(this->oftable.fp[i]);
+    for (u64 i = 0; i < NFILE_PROC; i++) {
+        if (this->oftable.files[i]) {
+            new_proc->oftable.files[i] = file_dup(this->oftable.files[i]);
         }
     }
 
-    printk("Fork complete, new pid=%d\n", new_proc->pid);
+    printk("fork pid=%d\n", new_proc->pid);
     // Start and return pid
     return start_proc(new_proc, trap_return, 0);
     /* (Final) TODO END */

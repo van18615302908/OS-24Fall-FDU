@@ -12,6 +12,9 @@
 #include <kernel/pt.h>
 #include <kernel/sched.h>
 
+#define ALIGN_UP(addr, size) (((usize)(addr) + (size - 1)) & (-size))
+#define ALIGN_DOWN(addr, size) (((usize)(addr)) & (-size))
+
 void init_sections(ListNode *section_head)
 {
     /* (Final) TODO BEGIN */
@@ -22,17 +25,27 @@ void init_sections(ListNode *section_head)
 void free_sections(struct pgdir *pd)
 {
     /* (Final) TODO BEGIN */
-
+    acquire_spinlock(&pd->lock);
     ListNode *node = pd->section_head.next;
     while (node != &pd->section_head) {
         struct section *section = container_of(node, struct section, stnode);
         ListNode *next = node->next;
 
-        detach_from_list(&pd->lock, node);
+        if (section->flags == ST_MMAP_SHARED &&
+            (section->prot & 2 /* PROT_WRITE */)) {
+            write_back(pd, section->fp, section->begin, section->offset,
+                       section->length);
+        }
+
+        if (section->fp) {
+            file_close(section->fp);
+        }
+
+        _detach_from_list(node);
         kfree(section);
         node = next;
     }
-
+    release_spinlock(&pd->lock);
     /* (Final) TODO END */
 }
 
@@ -127,6 +140,7 @@ int pgfault_handler(u64 iss)
     // Walk sections
     ListNode *node = p->pgdir.section_head.next;
     struct section *containing_section = NULL;
+    acquire_spinlock(&p->pgdir.lock);
     // Look for heap section
     while (node != &p->pgdir.section_head) {
         struct section *section = container_of(node, struct section, stnode);
@@ -139,9 +153,10 @@ int pgfault_handler(u64 iss)
         node = node->next;
     }
 
-    if (containing_section == NULL) {
+    if (!containing_section) {
         printk("(warn) Requested address (%llu) isn't inside a section! \n",
                addr);
+        release_spinlock(&p->pgdir.lock);
         return -1;
     }
 
@@ -155,29 +170,37 @@ int pgfault_handler(u64 iss)
     if ((dfsc >> 2) == 0x1) {
         // For lazy-allocated or file-backed sections, allocate physical page
         if (containing_section->flags & ST_HEAP ||
-            containing_section->fp != NULL) {
+            containing_section->flags & ST_STACK || containing_section->fp) {
             void *new_page = kalloc_page();
             if (!new_page) {
+                release_spinlock(&p->pgdir.lock);
                 return -1;
             }
 
             vmmap(pd, page_addr, new_page, PTE_USER_DATA);
 
             // Read content from file
-            if (containing_section->fp != NULL) {
-                inodes.lock(containing_section->fp->ip);
+            if (containing_section->fp) {
+                ASSERT((containing_section->flags & ST_FILE) ||
+                       (containing_section->flags & ST_MMAP));
+                u64 flags = PTE_USER_DATA;
+                if ((containing_section->flags & ST_MMAP) &&
+                    containing_section->prot == 1 /* PROT_READ */) {
+                    flags |= PTE_RO;
+                } else if (containing_section->flags == ST_MMAP_PRIVATE) {
+                    flags |= PTE_RO;
+                }
 
-                u64 offset_in_section = page_addr - containing_section->begin;
-                inodes.read(containing_section->fp->ip, new_page,
-                            containing_section->offset + offset_in_section,
-                            MIN((u64)PAGE_SIZE, containing_section->length -
-                                                   offset_in_section));
-                inodes.unlock(containing_section->fp->ip);
+                map_file(pd, containing_section->fp, containing_section->begin,
+                         containing_section->offset, containing_section->length,
+                         flags);
             }
 
+            release_spinlock(&p->pgdir.lock);
             return 0;
         } else {
-            printk("(warn) Translation error not resolvable.\n");
+            printk("(warn) translation error not resolvable.\n");
+            release_spinlock(&p->pgdir.lock);
             return -1;
         }
     }
@@ -187,15 +210,23 @@ int pgfault_handler(u64 iss)
         // Check `WnR` bit, this fault should be caused by a write command
         ASSERT(iss & 0x40);
 
+        if ((containing_section->flags & ST_MMAP) &&
+            containing_section->prot == 1 /* PROT_READ */) {
+            printk("(warn) attempting to write readonly mmap.\n");
+            release_spinlock(&p->pgdir.lock);
+            return -1;
+        }
+
         // Do a COW
+        // printk("Doing COW at %llu\n", addr);
         PTEntriesPtr pte = get_pte(pd, addr, false);
         ASSERT(pte != NULL && (*pte & 0x1));
         void *old_page_addr = (void *)P2K(PTE_ADDRESS(*pte));
-        // printk("Doing COW on %llu\n", old_page_addr);
 
         // Allocate a new page and copy
         void *new_page = kalloc_page();
         if (!new_page) {
+            release_spinlock(&p->pgdir.lock);
             return -1;
         }
 
@@ -203,11 +234,13 @@ int pgfault_handler(u64 iss)
         memcpy(new_page, old_page_addr, PAGE_SIZE);
         // Ref to the old page will be released in vmmap
         vmmap(pd, page_addr, new_page, PTE_USER_DATA);
+        release_spinlock(&p->pgdir.lock);
         return 0;
     }
 
     // Permission fault, address size fault, etc
     printk("Failed to handle page fault, killing proc %d\n", thisproc()->pid);
+    release_spinlock(&p->pgdir.lock);
     return -1;
 
     /* (Final) TODO END */
@@ -226,7 +259,7 @@ void copy_sections(ListNode *from_head, ListNode *to_head)
         copied->flags = section->flags;
         copied->fp = NULL;
         if (section->fp) {
-            copied->fp = section->fp;
+            copied->fp = file_dup(section->fp);
             copied->offset = section->offset;
             copied->length = section->length;
         }
@@ -235,4 +268,93 @@ void copy_sections(ListNode *from_head, ListNode *to_head)
         node = node->next;
     }
     /* (Final) TODO END */
+}
+
+int map_file(struct pgdir *pd, File *f, u64 va, usize offset, usize len,
+             u64 flags)
+{
+    usize bytes_read = 0;
+    u64 va_pos = va;
+    f->off = offset;
+
+    while (bytes_read < len) {
+        u64 va_page_base = PAGE_BASE(va_pos);
+        PTEntriesPtr pte = get_pte(pd, va_page_base, false);
+
+        char *phys_page = NULL;
+        if (!pte || !CHECK_DESCRIPTOR(*pte)) {
+            phys_page = kalloc_page();
+            memset(phys_page, 0, PAGE_SIZE);
+            vmmap(pd, va_page_base, phys_page, flags);
+        } else {
+            phys_page = (char *)P2K(PTE_ADDRESS(*pte));
+        }
+
+        u64 va_offset_in_page = va_pos - va_page_base;
+        u32 should_read = MIN(PAGE_SIZE - va_offset_in_page, len - bytes_read);
+
+        u32 read_count =
+                file_read(f, phys_page + va_offset_in_page, should_read);
+
+        bytes_read += read_count;
+        va_pos += read_count;
+        if (read_count != should_read) {
+            va_page_base = PAGE_BASE(va_pos);
+            va_offset_in_page = va_pos - va_page_base;
+
+            // Fill rest of this page with zero
+            if (va_pos % PAGE_SIZE != 0) {
+                u64 zero_count = ALIGN_UP(va_pos, PAGE_SIZE) - va_pos;
+                memset(phys_page + va_offset_in_page, 0, zero_count);
+                va_pos += zero_count;
+            }
+
+            ASSERT(va_pos % PAGE_SIZE == 0);
+            // Map the rest to shared zero page
+            while (va_pos < va + len) {
+                /* code */
+                vmmap(pd, va_pos, get_zero_page(), PTE_USER_DATA | PTE_RO);
+                va_pos += PAGE_SIZE;
+            }
+
+            return bytes_read;
+        }
+    }
+
+    return bytes_read;
+}
+
+int write_back(struct pgdir *pd, File *f, u64 va, usize offset, usize len)
+{
+    usize bytes_written = 0;
+    u64 va_pos = va;
+    f->off = offset;
+
+    while (bytes_written < len) {
+        u64 va_page_base = PAGE_BASE(va_pos);
+        PTEntriesPtr pte = get_pte(pd, va_page_base, false);
+
+        if (!pte || !CHECK_DESCRIPTOR(*pte)) {
+            // Pages aren't created yet, so there's no modifications, we can safely return
+            // printk("(info) pages unmodified, no need to write back\n");
+            return 0;
+        }
+
+        char *phys_addr = (char *)P2K(PTE_ADDRESS(*pte));
+
+        u64 va_offset_in_page = va_pos - va_page_base;
+        u32 write_count =
+                MIN(PAGE_SIZE - va_offset_in_page, len - bytes_written);
+
+        if (file_write(f, phys_addr + va_offset_in_page, write_count) !=
+            write_count) {
+            printk("(warn) write failure when writing back\n");
+            return -1;
+        }
+
+        bytes_written += write_count;
+        va_pos += write_count;
+    }
+
+    return bytes_written;
 }

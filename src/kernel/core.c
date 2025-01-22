@@ -32,9 +32,9 @@ void trap_return();
 
 NO_RETURN void kernel_entry()
 {
-    // init_filesystem();
+    init_filesystem();
 
-    printk("Hello world! (Core %lld)\n", cpuid());
+    // printk("Hello world! (Core %lld)\n", cpuid());
     // proc_test();
     // vm_test();
     // user_proc_test();
@@ -53,7 +53,7 @@ NO_RETURN void kernel_entry()
 
     // printk("Second partition LBA: %u\n", second_partition_lba);//防止warning
     // printk("Second partition size: %u blocks\n", second_partition_size);   
-    /* LAB 4 TODO 3 END */
+    // /* LAB 4 TODO 3 END */
 
     /**
      * (Final) TODO BEGIN 
@@ -75,9 +75,11 @@ NO_RETURN void kernel_entry()
             (struct section *)kalloc(sizeof(struct section));
     code_section->begin = EXTMEM + (u64)(icode - icode_page);
     code_section->end = code_section->begin + (eicode - icode);
-    code_section->flags = ST_TEXT;
+    code_section->flags = ST_DATA;
     code_section->fp = NULL;
+    printk("1");
     _insert_into_list(&proc->pgdir.section_head, &code_section->stnode);
+    printk("code_section: %p\n", code_section);
 
     proc->cwd = inodes.share(inodes.root);
 
@@ -94,9 +96,9 @@ NO_RETURN void kernel_entry()
         int pid = wait(&code);
         ASSERT(pid != 0);
     }
+
     /* (Final) TODO END */
 }
-
 NO_INLINE NO_RETURN void _panic(const char *file, int line)
 {
     printk("=====%s:%d PANIC%lld!=====\n", file, line, cpuid());
