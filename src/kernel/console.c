@@ -2,6 +2,8 @@
 #include <aarch64/intrinsic.h>
 #include <kernel/sched.h>
 #include <driver/uart.h>
+#include <common/string.h>
+#include <kernel/printk.h>
 
 #define CTRL(c) (c - '@')
 
@@ -102,8 +104,75 @@ void console_intr(char c)
     acquire_spinlock(&cons.lock);
     // Special characters
     switch (c) {
-    // Backspace
-    case '\x7f':
+    // case '\n': // 用户按下 Enter 键
+    //     // 存储到历史记录
+    //     if (cons.edit_idx > cons.write_idx) {
+    //         int cmd_len = cons.edit_idx - cons.write_idx;
+    //         if (cmd_len > CMD_MAX_LENGTH - 1) {
+    //             cmd_len = CMD_MAX_LENGTH - 1;
+    //         }
+    //         strncpy(cons.cmd_history[cons.cmd_history_count % CMD_HISTORY_SIZE],
+    //                 &cons.buf[cons.write_idx % IBUF_SIZE], cmd_len);
+    //         cons.cmd_history[cons.cmd_history_count % CMD_HISTORY_SIZE][cmd_len] = '\0';
+    //         cons.cmd_history_count++;
+    //     }
+
+    //     cons.write_idx = cons.edit_idx;
+    //     uart_put_char(c);
+    //     post_all_sem(&cons.sem); // 处理缓冲
+    //     break;
+
+    // case CTRL('h'): // control + i
+    //     if (cons.cmd_history_viewing == 0) {
+    //         cons.cmd_history_index = cons.cmd_history_count;
+    //         cons.cmd_history_viewing = 1;
+    //     }
+    //     if (cons.cmd_history_index > 0) {
+    //         cons.cmd_history_index--;
+    //         // 清除当前行
+    //         while (cons.edit_idx > cons.write_idx) {
+    //             cons.edit_idx--;
+    //             uart_put_char('\b');
+    //             uart_put_char(' ');
+    //             uart_put_char('\b');
+    //         }
+    //         // 加载历史命令
+    //         const char *cmd = cons.cmd_history[cons.cmd_history_index % CMD_HISTORY_SIZE];
+    //         int cmd_len = strlen(cmd);
+    //         for (int i = 0; i < cmd_len; i++) {
+    //             cons.buf[cons.edit_idx++ % IBUF_SIZE] = cmd[i];
+    //             uart_put_char(cmd[i]);
+    //         }
+    //     }
+    //     break;
+
+
+    // case CTRL('M'): // control + 
+    //     if (cons.cmd_history_viewing == 1 && cons.cmd_history_index < cons.cmd_history_count) {
+    //         cons.cmd_history_index++;
+    //         // 清除当前行
+    //         while (cons.edit_idx > cons.write_idx) {
+    //             cons.edit_idx--;
+    //             uart_put_char('\b');
+    //             uart_put_char(' ');
+    //             uart_put_char('\b');
+    //         }
+    //         // 加载历史命令或清空行
+    //         if (cons.cmd_history_index == cons.cmd_history_count) {
+    //             cons.cmd_history_viewing = 0; // 已到最新，无命令可显示
+    //         } else {
+    //             const char *cmd = cons.cmd_history[cons.cmd_history_index % CMD_HISTORY_SIZE];
+    //             int cmd_len = strlen(cmd);
+    //             for (int i = 0; i < cmd_len; i++) {
+    //                 cons.buf[cons.edit_idx++ % IBUF_SIZE] = cmd[i];
+    //                 uart_put_char(cmd[i]);
+    //             }
+    //         }
+    //     }
+    //     break;
+
+
+    case '\x7f'://backspace
         if (cons.edit_idx != cons.write_idx) {
             cons.edit_idx--;
             uart_put_char('\b');
@@ -111,7 +180,7 @@ void console_intr(char c)
             uart_put_char('\b');
         }
         break;
-    case CTRL('U'):
+    case CTRL('U')://ctrl+u
         while (cons.edit_idx != cons.write_idx &&
                cons.buf[(cons.edit_idx + IBUF_SIZE - 1) % IBUF_SIZE] != '\n') {
             cons.edit_idx--;
@@ -121,7 +190,7 @@ void console_intr(char c)
             uart_put_char('\b');
         }
         break;
-    case CTRL('D'):
+    case CTRL('D')://ctrl+d
         cons.write_idx = cons.edit_idx;
         __attribute__((fallthrough));
     default:

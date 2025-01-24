@@ -26,11 +26,12 @@ extern void recycle_proc(Proc *proc);
 int execve(const char *path, char *const argv[], char *const envp[])
 {
     /* (Final) TODO BEGIN */
-    printk("Execve begin\n");
+    // printk("Execve begin\n");
 
     OpContext ctx;
     bcache.begin_op(&ctx);
     Inode *inode = namei(path, &ctx);
+    // printk("Execve namei\n");
 
     if (!inode) {
         bcache.end_op(&ctx);

@@ -163,11 +163,11 @@ int getcmd(char *buf, int nbuf)
 int main(int argc, char *argv[])
 {
     for (int i = 0; i < argc; i++) {
-        printf("sh: argv[%d] = '%s'\n", i, argv[i]);
+        // printf("sh: argv[%d] = '%s'\n", i, argv[i]);
     }
     char *test_env = getenv("TEST_ENV");
     if (test_env) {
-        printf("sh: testenv = '%s'\n", test_env);
+        // printf("sh: testenv = '%s'\n", test_env);
     } else {
         printf("sh: testenv not found!\n");
     }

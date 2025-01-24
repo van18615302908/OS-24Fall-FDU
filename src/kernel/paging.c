@@ -162,8 +162,6 @@ int pgfault_handler(u64 iss)
 
     u64 page_addr = PAGE_BASE(addr);
 
-    // Reference: https://developer.arm.com/documentation/ddi0601/2024-09/AArch32-Registers/HSR--Hyp-Syndrome-Register
-    // Section: `ISS encoding for Exception from a Data Abort`
     const u64 dfsc = iss & 0x3F;
 
     // Translation fault

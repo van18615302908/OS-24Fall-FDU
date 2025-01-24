@@ -6,6 +6,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <fs/defines.h>
+
 char buf[8192];
 char name[3];
 
@@ -161,6 +162,6 @@ int main(int argc, char *argv[])
     writetest();
     writetestbig();
     createtest();
-
+    printf("usertests ok\n");
     exit(0);
 }

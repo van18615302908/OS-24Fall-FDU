@@ -35,10 +35,10 @@ NO_RETURN void kernel_entry()
     init_filesystem();
 
     // printk("Hello world! (Core %lld)\n", cpuid());
-    // proc_test();
-    // vm_test();
-    // user_proc_test();
-    // io_test();
+    proc_test();
+    vm_test();
+    user_proc_test();
+    io_test();
 
     // /* LAB 4 TODO 3 BEGIN */
     // Buf mbr_buf;
@@ -77,9 +77,9 @@ NO_RETURN void kernel_entry()
     code_section->end = code_section->begin + (eicode - icode);
     code_section->flags = ST_DATA;
     code_section->fp = NULL;
-    printk("1");
+    // printk("1");
     _insert_into_list(&proc->pgdir.section_head, &code_section->stnode);
-    printk("code_section: %p\n", code_section);
+    // printk("code_section: %p\n", code_section);
 
     proc->cwd = inodes.share(inodes.root);
 

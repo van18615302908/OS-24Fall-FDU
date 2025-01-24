@@ -677,9 +677,11 @@ static Inode *namex(const char *path, bool nameiparent, char *name,
         inode_lock(current);
 
         if (current->entry.type != INODE_DIRECTORY) {
+
             inode_unlock(current);
             inode_put(ctx, current);
             printk("(warn) calling `namex` on non-directory inode! \n");
+            printk("(warn) calling `namex` on non-directory inode! Path: %s, Inode type: %d\n", path, current->entry.type);
             return NULL;
         }
 
@@ -691,10 +693,10 @@ static Inode *namex(const char *path, bool nameiparent, char *name,
 
         // Find next level
         usize next_no = inode_lookup(current, name, NULL);
-        if (next_no == 0) {
+        if (next_no == 0 ) {
             inode_unlock(current);
             inode_put(ctx, current);
-            printk("(warn) next dir `%s` not found! \n", name);
+            // printk("!!! can not find next dir `%s`  \n", name);
             return NULL;
         }
 
