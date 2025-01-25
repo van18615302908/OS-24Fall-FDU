@@ -51,7 +51,7 @@ define_syscall(sbrk, i64 size)
 define_syscall(clone, int flag, void *childstk)
 {
     if (flag != 17) {
-        printk("sys_clone: flags other than SIGCHLD are not supported.\n");
+        printk("sys_clone lag != 17\n");
         return -1;
     }
     (void)childstk;
@@ -74,6 +74,7 @@ define_syscall(exit_group, int n)
 }
 
 int execve(const char *path, char *const argv[], char *const envp[]);
+
 define_syscall(execve, const char *p, void *argv, void *envp)
 {
     if (!user_strlen(p, 256))
@@ -84,9 +85,7 @@ define_syscall(execve, const char *p, void *argv, void *envp)
 define_syscall(wait4, int pid, int *wstatus, int options, void *rusage)
 {
     if (options != 0 || rusage != 0) {
-        printk("sys_wait4: unimplemented. pid %d, wstatus 0x%p, options 0x%x, "
-               "rusage 0x%p\n",
-               pid, wstatus, options, rusage);
+        printk("sys_wait4: unimplemented.\n");
     }
     int code, ret;
     if (pid == -1) {

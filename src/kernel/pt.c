@@ -8,116 +8,64 @@
 #include <kernel/pt.h>
 #include <kernel/paging.h>
 
-/*
-Reference: https://docs.kernel.org/arch/arm64/memory.html
-VIRTUAL ADDR LAYOUT: 
-[0:11]  Offset within page (12 bits, 4096 bytes)
-[12:20] L3 Index (9 bits, 512 entries)
-[21:29] L2 Index (9 bits, 512 entries)
-[30:38] L1 Index (9 bits, 512 entries)
-[39:47] L0 Index (9 bits, 512 entries)
-*/
-#define VA_STOP 0xFFFFFFFFFFFF
 
-PTEntry construct_table_descriptor(PTEntriesPtr next_level_addr)
-{
-    PTEntry descriptor = (PTEntry)next_level_addr;
 
-    // Set flag for table descriptor
-    descriptor |= PTE_PAGE;
-    return descriptor;
-}
-
-PTEntry construct_page_descriptor(PTEntriesPtr phys_addr)
-{
-    PTEntry descriptor = (PTEntry)phys_addr;
-
-    // Set flag for table descriptor
-    descriptor |= PTE_PAGE;
-    return descriptor;
-}
-
-// Allocate a new page table, and write its address to the parent level
 PTEntriesPtr allocate_table(PTEntry *parent_level_pte)
 {
     PTEntriesPtr new_page_table = kalloc_page();
 
-    // Clear memory with zero
     memset(new_page_table, 0, PAGE_SIZE);
-
-    // Write physical address to parent level page table if applicable
     if (parent_level_pte) {
-        *parent_level_pte =
-                construct_table_descriptor((PTEntriesPtr)K2P(new_page_table));
+        PTEntry descriptor = (PTEntry)(PTEntriesPtr)K2P(new_page_table);
+        descriptor |= PTE_PAGE;
+        *parent_level_pte = descriptor;
     }
     return new_page_table;
 }
 
-PTEntriesPtr get_pte(struct pgdir *pgdir, u64 va, bool alloc)
-{
-    // TODO:
-    // Return a pointer to the PTE (Page Table Entry) for virtual address 'va'
-    // If the entry not exists (NEEDN'T BE VALID), allocate it if alloc=true, or return NULL if false.
-    // THIS ROUTINUE GETS THE PTE, NOT THE PAGE DESCRIBED BY PTE.
+PTEntriesPtr get_or_alloc_table(PTEntriesPtr parent_table, u64 index, bool alloc) {
+    if (!CHECK_DESCRIPTOR(parent_table[index])) {
+        if (alloc) {
+            return allocate_table(parent_table + index);
+        }
+        return NULL;
+    }
+    return (PTEntriesPtr)P2K(PTE_ADDRESS(parent_table[index]));
+}
 
-    // `pgdir->pt` is kernel address
+PTEntriesPtr get_pte(struct pgdir *pgdir, u64 va, bool alloc) {
+    // 顶层页表指针
     PTEntriesPtr pt_l0 = pgdir->pt;
     if (!pt_l0) {
         if (alloc) {
             pt_l0 = pgdir->pt = allocate_table(NULL);
+            if (!pt_l0) return NULL; // 分配失败
         } else {
             return NULL;
         }
     }
 
-    u64 index_l0 = VA_PART0(va);
-    PTEntriesPtr pt_l1;
+    // 逐级解析页表
+    u64 l0_index = VA_PART0(va);
+    PTEntriesPtr pt_l1 = get_or_alloc_table(pt_l0, l0_index, alloc);
+    if (!pt_l1) return NULL;
 
-    if (!CHECK_DESCRIPTOR(pt_l0[index_l0])) {
-        if (alloc) {
-            pt_l1 = allocate_table(pt_l0 + index_l0);
-        } else {
-            return NULL;
-        }
-    } else {
-        pt_l1 = (PTEntriesPtr)P2K(PTE_ADDRESS(pt_l0[index_l0]));
-    }
+    u64 l1_index = VA_PART1(va);
+    PTEntriesPtr pt_l2 = get_or_alloc_table(pt_l1, l1_index, alloc);
+    if (!pt_l2) return NULL;
 
-    u64 index_l1 = VA_PART1(va);
-    PTEntriesPtr pt_l2;
+    u64 l2_index = VA_PART2(va);
+    PTEntriesPtr pt_l3 = get_or_alloc_table(pt_l2, l2_index, alloc);
+    if (!pt_l3) return NULL;
 
-    if (!CHECK_DESCRIPTOR(pt_l1[index_l1])) {
-        if (alloc) {
-            pt_l2 = allocate_table(pt_l1 + index_l1);
-        } else {
-            return NULL;
-        }
-    } else {
-        pt_l2 = (PTEntriesPtr)P2K(PTE_ADDRESS(pt_l1[index_l1]));
-    }
-
-    u64 index_l2 = VA_PART2(va);
-    PTEntriesPtr pt_l3;
-
-    if (!CHECK_DESCRIPTOR(pt_l2[index_l2])) {
-        if (alloc) {
-            pt_l3 = allocate_table(pt_l2 + index_l2);
-        } else {
-            return NULL;
-        }
-    } else {
-        pt_l3 = (PTEntriesPtr)P2K(PTE_ADDRESS(pt_l2[index_l2]));
-    }
-
-    u64 index_l3 = VA_PART3(va);
-    return pt_l3 + index_l3;
+    // 最终返回 PTE 指针
+    u64 l3_index = VA_PART3(va);
+    return pt_l3 + l3_index;
 }
 
 void init_pgdir(struct pgdir *pgdir)
 {
     init_spinlock(&pgdir->lock);
-
-    // Init root table
     pgdir->pt = kalloc_page();
     memset(pgdir->pt, 0, PAGE_SIZE);
 }
@@ -241,46 +189,63 @@ void vmmap(struct pgdir *pd, u64 va, void *ka, u64 flags)
     /* (Final) TODO END */
 }
 
+char* get_or_alloc_physical_page(struct pgdir *pd, u64 va_page_base) {
+    // 获取页表项
+    PTEntriesPtr pte = get_pte(pd, va_page_base, true);
+    if (pte == NULL) {
+        printk("Failed to get PTE for VA: %llu\n", va_page_base);
+        return NULL;
+    }
+
+    // 如果页表项无效，则分配物理页
+    if (!CHECK_DESCRIPTOR(*pte)) {
+        char *new_page = (char *)kalloc_page();
+        if (new_page == NULL) {
+            printk("Failed to allocate physical page for VA: %llu\n", va_page_base);
+            return NULL;
+        }
+
+        // 设置页表项并刷新 TLB
+        *pte = K2P(new_page) | PTE_USER_DATA;
+        arch_tlbi_vmalle1is();
+    }
+
+    // 返回物理页地址（内核可访问）
+    return (char *)P2K(PTE_ADDRESS(*pte));
+}
 /*
  * Copy len bytes from p to user address va in page table pgdir.
  * Allocate physical pages if required.
  * Useful when pgdir is not the current page table.
  */
-int copyout(struct pgdir *pd, void *va, void *p, usize len)
-{
-    /* (Final) TODO BEGIN */
+int copyout(struct pgdir *pd, void *va, void *p, usize len) {
     char *source = (char *)p;
     u64 va_offset = (u64)va;
 
     while (len > 0) {
         u64 va_page_base = PAGE_BASE(va_offset);
-        PTEntriesPtr pte = get_pte(pd, va_page_base, true);
-        if (pte == NULL) {
+
+        // 获取或分配页表项
+        char *page_addr = get_or_alloc_physical_page(pd, va_page_base);
+        if (page_addr == NULL) {
+            printk("Failed to allocate or access page for VA: %llu\n", va_page_base);
             return -1;
         }
 
-        // Allocate page if there isn't one
-        if (!CHECK_DESCRIPTOR(*pte)) {
-            char *new_page = (char *)kalloc_page();
-            if (new_page == NULL) {
-                return -1;
-            }
-            *pte = K2P(new_page) | PTE_USER_DATA;
-            arch_tlbi_vmalle1is();
-        }
-
-        char *page_addr = (char *)P2K(PTE_ADDRESS(*pte));
+        // 计算当前页中可以拷贝的字节数
         u32 offset_in_page = va_offset - va_page_base;
         usize copy_count = MIN(PAGE_SIZE - offset_in_page, len);
 
+        // 拷贝数据到目标页
         memcpy(page_addr + offset_in_page, source, copy_count);
+
+        // 更新剩余长度和地址偏移
         len -= copy_count;
         source += copy_count;
         va_offset += copy_count;
     }
 
     return 0;
-    /* (Final) TODO END */
 }
 
 /*

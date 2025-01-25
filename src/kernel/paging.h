@@ -17,6 +17,8 @@
 #define ST_MMAP  (1<<5)
 #define ST_MMAP_PRIVATE ST_MMAP
 #define ST_MMAP_SHARED  (ST_MMAP | ST_RO)
+#define ALIGN_UP(addr, size) (((usize)(addr) + (size - 1)) & (-size))
+#define ALIGN_DOWN(addr, size) (((usize)(addr)) & (-size))
 
 struct section {
     u64 flags;

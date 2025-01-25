@@ -51,7 +51,7 @@ isize console_write(Inode *ip, char *buf, isize n)
 isize console_read(Inode *ip, char *dst, isize n)
 {
     /* (Final) TODO BEGIN */
-    // Remaining length to read
+
     isize len = n;
     inodes.unlock(ip);
     acquire_spinlock(&cons.lock);

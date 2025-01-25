@@ -255,7 +255,9 @@ typedef struct {
     @brief the global inode layer instance.
  */
 extern InodeTree inodes;
-
+#define TO_BLOCK_NO(inode_no) (sblock->inode_start + ((inode_no) / INODE_PER_BLOCK))
+#define GET_ENTRY(block, inode_no) (((InodeEntry *)((block)->data)) + ((inode_no) % INODE_PER_BLOCK))
+#define GET_ADDRS(block) (((IndirectBlock *)((block)->data))->addrs)
 /**
     @brief initialize the inode layer.
 

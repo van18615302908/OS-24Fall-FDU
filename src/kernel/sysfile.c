@@ -1,16 +1,9 @@
-//
-// File-system system calls implementation.
-// Mostly argument checking, since we don't trust
-// user code, and calls into file.c and fs.c.
-//
-
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/sysmacros.h>
 #include <sys/mman.h>
 #include <stddef.h>
-
 #include "syscall.h"
 #include <aarch64/mmu.h>
 #include <common/defines.h>
@@ -26,10 +19,7 @@
 #include <kernel/proc.h>
 #include <kernel/sched.h>
 
-struct iovec {
-    void *iov_base; /* Starting address. */
-    usize iov_len; /* Number of bytes to transfer. */
-};
+
 
 /** 
  * Get the file object by fd. Return null if the fd is invalid.
@@ -37,15 +27,10 @@ struct iovec {
 static struct file *fd2file(int fd)
 {
     /* (Final) TODO BEGIN */
-
-    Proc *this = thisproc();
-
-    // Avoid index out of bound
     if (fd >= NFILE || fd < 0) {
         return NULL;
     }
-
-    File *file = this->oftable.files[fd];
+    File *file = thisproc()->oftable.files[fd];
     if (file == NULL || file->type == FD_NONE) {
         return NULL;
     }
@@ -86,189 +71,190 @@ define_syscall(ioctl, int fd, u64 request)
     (void)fd;
     return 0;
 }
+u64 find_free_memory_region(ListNode *section_head, int length) {
+    u64 search_start = 0x70000000; // 从 0x70000000 开始搜索
+    u64 begin = search_start;
+    u64 end = begin + length;
 
-#define ALIGN_UP(addr, size) (((usize)(addr) + (size - 1)) & (-size))
-#define ALIGN_DOWN(addr, size) (((usize)(addr)) & (-size))
+    while (true) {
+        bool valid = true;
+        ListNode *node = section_head->next;
 
-define_syscall(mmap, void *addr, int length, int prot, int flags, int fd,
-               int offset)
-{
-    /* (Final) TODO BEGIN */
-    File *f = fd2file(fd);
-
-    if (!f) {
-        printk("(warn) mmap: file doesn't exist! \n");
-        return -1;
-    }
-
-    // Check permission
-    if ((prot & PROT_WRITE) && flags != MAP_PRIVATE && !f->writable) {
-        printk("(warn) mmap: creating shared writable mmap but file isn't writable! \n");
-        return -1;
-    }
-
-    Proc *this = thisproc();
-
-    acquire_spinlock(&this->pgdir.lock);
-    u64 begin, end;
-    if (!addr) {
-        // Start to search from 0x70000000, which is between heap and stack
-        bool valid = false;
-        begin = 0x70000000;
-        end = begin + length;
-
-        // Find unoccupied memory area
-        while (!valid) {
-            valid = true;
-            ListNode *node = this->pgdir.section_head.next;
-            while (node != &this->pgdir.section_head) {
-                struct section *section =
-                        container_of(node, struct section, stnode);
-                if (section->begin < end && section->end > begin) {
-                    begin = ALIGN_UP(section->end, PAGE_SIZE);
-                    end = begin + length;
-                    valid = false;
-                    break;
-                }
-
-                node = node->next;
-            }
-        }
-
-        if (!valid) {
-            release_spinlock(&this->pgdir.lock);
-            printk("(warn) cannot find appropriate space for mmap\n");
-            return -1;
-        }
-    } else {
-        begin = (u64)addr;
-        end = begin + length;
-
-        ListNode *node = this->pgdir.section_head.next;
-        while (node != &this->pgdir.section_head) {
-            struct section *section =
-                    container_of(node, struct section, stnode);
+        while (node != section_head) {
+            struct section *section = container_of(node, struct section, stnode);
             if (section->begin < end && section->end > begin) {
-                release_spinlock(&this->pgdir.lock);
-                printk("(warn) given address invalid since it intersects with existing sections\n");
-                return -1;
+                // 调整搜索起点
+                begin = ALIGN_UP(section->end, PAGE_SIZE);
+                end = begin + length;
+                valid = false;
+                break;
             }
+            node = node->next;
         }
+
+        if (valid) break;
     }
 
-    printk("Mapping file to %llu - %llu\n", begin, end);
-    struct section *map_section =
-            (struct section *)kalloc(sizeof(struct section));
+    return begin;
+}
+bool is_address_valid(ListNode *section_head, u64 begin, u64 end) {
+    ListNode *node = section_head->next;
+    while (node != section_head) {
+        struct section *section = container_of(node, struct section, stnode);
+        if (section->begin < end && section->end > begin) {
+            return false; // 地址冲突
+        }
+        node = node->next;
+    }
+    return true;
+}
+struct section* create_mmap_section(File *f, u64 begin, int length, int prot, int flags, int offset) {
+    struct section *map_section = (struct section *)kalloc(sizeof(struct section));
+    if (!map_section) {
+        printk("(warn) mmap: failed to allocate section\n");
+        return NULL;
+    }
 
     map_section->begin = begin;
-    map_section->end = end;
-    map_section->flags =
-            (flags == MAP_PRIVATE ? ST_MMAP_PRIVATE : ST_MMAP_SHARED);
+    map_section->end = begin + length;
+    map_section->flags = (flags == MAP_PRIVATE ? ST_MMAP_PRIVATE : ST_MMAP_SHARED);
     map_section->fp = file_dup(f);
     map_section->offset = offset;
     map_section->length = length;
     map_section->prot = prot;
 
+    return map_section;
+}
+define_syscall(mmap, void *addr, int length, int prot, int flags, int fd, int offset) {
+    File *f = fd2file(fd);
+    if (!f) {
+        printk("mmap: file doesn't exist!\n");
+        return -1;
+    }
+
+    // 检查权限
+    if ((prot & PROT_WRITE) && flags != MAP_PRIVATE && !f->writable) {
+        printk("mmap: creating shared writable mmap but file isn't writable!\n");
+        return -1;
+    }
+
+    Proc *this = thisproc();
+    acquire_spinlock(&this->pgdir.lock);
+
+    u64 begin, end;
+    if (!addr) {
+        // 动态分配地址
+        begin = find_free_memory_region(&this->pgdir.section_head, length);
+        if (begin == 0) {
+            release_spinlock(&this->pgdir.lock);
+            printk("mmap: cannot find appropriate space for mmap\n");
+            return -1;
+        }
+    } else {
+        // 使用用户提供的地址
+        begin = (u64)addr;
+        end = begin + length;
+        if (!is_address_valid(&this->pgdir.section_head, begin, end)) {
+            release_spinlock(&this->pgdir.lock);
+            printk("mmap: given address intersects with existing sections\n");
+            return -1;
+        }
+    }
+
+    // 创建映射段
+    struct section *map_section = create_mmap_section(f, begin, length, prot, flags, offset);
+    if (!map_section) {
+        release_spinlock(&this->pgdir.lock);
+        return -1;
+    }
+
+    // 插入到段列表
     _insert_into_list(&this->pgdir.section_head, &map_section->stnode);
     release_spinlock(&this->pgdir.lock);
 
     return begin;
-    /* (Final) TODO END */
 }
 
-define_syscall(munmap, void *addr, size_t length)
-{
-    /* (Final) TODO BEGIN */
+struct section* find_mapped_section(ListNode *section_head, u64 addr) {
+    ListNode *node = section_head->next;
+    while (node != section_head) {
+        struct section *section = container_of(node, struct section, stnode);
+        if (section->begin == addr) {
+            return section;
+        }
+        node = node->next;
+    }
+    return NULL; // 未找到映射段
+}
+void release_mapped_pages(struct pgdir *pgdir, struct section *mapped_section, size_t length, bool free_whole_section) {
+    u64 va = ALIGN_DOWN(mapped_section->begin, PAGE_SIZE);
+    u64 end_va = free_whole_section ? mapped_section->end : mapped_section->begin + length;
+
+    while (va < end_va) {
+        PTEntriesPtr pte = get_pte(pgdir, va, false);
+        if (!pte) {
+            va += PAGE_SIZE;
+            continue;
+        }
+
+        if (CHECK_DESCRIPTOR(*pte)) {
+            void *old_page = (void *)P2K(PTE_ADDRESS(*pte));
+            kfree_page(old_page); // 释放物理页
+        }
+
+        *pte = 0; // 清除页表项
+        va += PAGE_SIZE;
+    }
+}
+define_syscall(munmap, void *addr, size_t length) {
     Proc *this = thisproc();
     acquire_spinlock(&this->pgdir.lock);
 
-    // Find unoccupied memory area
-    struct section *mapped_section = NULL;
-    ListNode *node = this->pgdir.section_head.next;
-    while (node != &this->pgdir.section_head) {
-        struct section *section = container_of(node, struct section, stnode);
-        if (section->begin == (u64)addr) {
-            mapped_section = section;
-            break;
-        }
-
-        node = node->next;
-    }
-
+    // 查找对应的映射段
+    struct section *mapped_section = find_mapped_section(&this->pgdir.section_head, (u64)addr);
     if (!mapped_section || !mapped_section->fp) {
-        // No effect if mapping doesn't exist
         release_spinlock(&this->pgdir.lock);
-        return 0;
+        return 0; // 如果未找到映射，直接返回
     }
 
+    // 确定需要释放的长度
     bool free_whole_section = false;
     if (length >= mapped_section->end - mapped_section->begin) {
         length = mapped_section->end - mapped_section->begin;
         free_whole_section = true;
     }
 
-    // Only write back public mappings
-    if (mapped_section->flags == ST_MMAP_SHARED &&
-        (mapped_section->prot & PROT_WRITE)) {
-        write_back(&this->pgdir, mapped_section->fp, mapped_section->begin,
-                   mapped_section->offset, length);
+    // 写回共享映射区域
+    if (mapped_section->flags == ST_MMAP_SHARED && (mapped_section->prot & PROT_WRITE)) {
+        write_back(&this->pgdir, mapped_section->fp, mapped_section->begin, mapped_section->offset, length);
     }
 
-    u64 va = ALIGN_DOWN(mapped_section->begin, PAGE_SIZE);
+    // 释放虚拟地址对应的页表映射
+    release_mapped_pages(&this->pgdir, mapped_section, length, free_whole_section);
+
     if (free_whole_section) {
-        while (va < mapped_section->end) {
-            PTEntriesPtr pte = get_pte(&this->pgdir, va, false);
-            if (!pte) {
-                continue;
-            }
-
-            if (CHECK_DESCRIPTOR(*pte)) {
-                void *old_page = (void *)P2K(PTE_ADDRESS(*pte));
-                kfree_page(old_page);
-            }
-
-            *pte = 0;
-            va += PAGE_SIZE;
-        }
-
+        // 从段列表中移除映射段并释放资源
         _detach_from_list(&mapped_section->stnode);
         file_close(mapped_section->fp);
         kfree(mapped_section);
     } else {
-        while (va + PAGE_SIZE <= mapped_section->begin + length) {
-            PTEntriesPtr pte = get_pte(&this->pgdir, va, false);
-            if (!pte) {
-                continue;
-            }
-
-            if (CHECK_DESCRIPTOR(*pte)) {
-                void *old_page = (void *)P2K(PTE_ADDRESS(*pte));
-                kfree_page(old_page);
-            }
-
-            *pte = 0;
-            va += PAGE_SIZE;
-        }
-
+        // 更新部分释放后的映射段信息
         mapped_section->begin += length;
         mapped_section->offset += length;
         mapped_section->length -= length;
     }
 
-    arch_tlbi_vmalle1is();
+    arch_tlbi_vmalle1is(); // 刷新 TLB
     release_spinlock(&this->pgdir.lock);
     return 0;
-    /* (Final) TODO END */
 }
 
 define_syscall(dup, int fd)
 {
     struct file *f = fd2file(fd);
-    if (!f)
-        return -1;
+    if (!f)return -1;
     fd = fdalloc(f);
-    if (fd < 0)
-        return -1;
+    if (fd < 0)return -1;
     file_dup(f);
     return fd;
 }
@@ -276,16 +262,14 @@ define_syscall(dup, int fd)
 define_syscall(read, int fd, char *buffer, int size)
 {
     struct file *f = fd2file(fd);
-    if (!f || size <= 0 || !user_writeable(buffer, size))
-        return -1;
+    if (!f || size <= 0 || !user_writeable(buffer, size))return -1;
     return file_read(f, buffer, size);
 }
 
 define_syscall(write, int fd, char *buffer, int size)
 {
     struct file *f = fd2file(fd);
-    if (!f || size <= 0 || !user_readable(buffer, size))
-        return -1;
+    if (!f || size <= 0 || !user_readable(buffer, size))return -1;
     return file_write(f, buffer, size);
 }
 
@@ -293,12 +277,10 @@ define_syscall(writev, int fd, struct iovec *iov, int iovcnt)
 {
     struct file *f = fd2file(fd);
     struct iovec *p;
-    if (!f || iovcnt <= 0 || !user_readable(iov, sizeof(struct iovec) * iovcnt))
-        return -1;
+    if (!f || iovcnt <= 0 || !user_readable(iov, sizeof(struct iovec) * iovcnt))return -1;
     usize tot = 0;
     for (p = iov; p < iov + iovcnt; p++) {
-        if (!user_readable(p->iov_base, p->iov_len))
-            return -1;
+        if (!user_readable(p->iov_base, p->iov_len))return -1;
         tot += file_write(f, p->iov_base, p->iov_len);
     }
     return tot;
@@ -309,9 +291,7 @@ define_syscall(close, int fd)
     /* (Final) TODO BEGIN */
     File *f = fd2file(fd);
 
-    if (f == NULL) {
-        return -1;
-    }
+    if (f == NULL) return -1;
 
     thisproc()->oftable.files[fd] = 0;
     file_close(f);
@@ -323,8 +303,7 @@ define_syscall(close, int fd)
 define_syscall(fstat, int fd, struct stat *st)
 {
     struct file *f = fd2file(fd);
-    if (!f || !user_writeable(st, sizeof(*st)))
-        return -1;
+    if (!f || !user_writeable(st, sizeof(*st)))return -1;
     return file_stat(f, st);
 }
 
@@ -345,10 +324,12 @@ define_syscall(newfstatat, int dirfd, const char *path, struct stat *st,
     Inode *ip;
     OpContext ctx;
     bcache.begin_op(&ctx);
+
     if ((ip = namei(path, &ctx)) == 0) {
         bcache.end_op(&ctx);
         return -1;
     }
+
     inodes.lock(ip);
     stati(ip, st);
     inodes.unlock(ip);
@@ -357,15 +338,31 @@ define_syscall(newfstatat, int dirfd, const char *path, struct stat *st,
 
     return 0;
 }
+bool validate_directory(OpContext *ctx, Inode *inode) {
+    inodes.lock(inode);
 
+    if (inode->entry.type != INODE_DIRECTORY) {
+        inodes.unlock(inode);
+        inodes.put(ctx, inode);
+        return false; // 非目录类型
+    }
+
+    inodes.unlock(inode);
+    return true; // 验证通过
+}
+void update_cwd(Proc *proc, OpContext *ctx, Inode *new_cwd) {
+    if (proc->cwd) {
+        inodes.put(ctx, proc->cwd); // 释放当前工作目录的引用
+    }
+    proc->cwd = new_cwd; // 设置新的工作目录
+}
 static int isdirempty(Inode *dp)
 {
     usize off;
     DirEntry de;
 
     for (off = 2 * sizeof(de); off < dp->entry.num_bytes; off += sizeof(de)) {
-        if (inodes.read(dp, (u8 *)&de, off, sizeof(de)) != sizeof(de))
-            PANIC();
+        if (inodes.read(dp, (u8 *)&de, off, sizeof(de)) != sizeof(de))PANIC();
         if (de.inode_no != 0)
             return 0;
     }
@@ -433,6 +430,56 @@ bad:
     return -1;
 }
 
+
+Inode *handle_existing_inode(OpContext *ctx, Inode *parent, usize inode_index, short type) {
+    inodes.unlock(parent);
+    inodes.put(ctx, parent);
+
+    Inode *target = inodes.get(inode_index);
+    inodes.lock(target);
+
+    if (type == target->entry.type) {
+        return target; // 类型匹配，直接返回
+    }
+
+    inodes.unlock(target);
+    inodes.put(ctx, target);
+    return NULL; // 类型不匹配
+}
+Inode *initialize_inode(OpContext *ctx, usize inode_index, short type, short major, short minor) {
+    Inode *target = inodes.get(inode_index);
+    inodes.lock(target);
+
+    target->entry.type = type;
+    target->entry.major = major;
+    target->entry.minor = minor;
+    target->entry.num_links = 1;
+    inodes.sync(ctx, target, true);
+
+    return target;
+}
+bool create_dot_entries(OpContext *ctx, Inode *target, Inode *parent) {
+    if (inodes.insert(ctx, target, ".", target->inode_no) < 0 ||
+        inodes.insert(ctx, target, "..", parent->inode_no) < 0) {
+        printk("(warn) failed to alloc . or ..\n");
+        return false; // 创建失败
+    }
+
+    parent->entry.num_links++; // 增加父目录的引用计数
+    inodes.sync(ctx, parent, true);
+    return true;
+}
+void cleanup_parent(OpContext *ctx, Inode *parent) {
+    inodes.unlock(parent);
+    inodes.put(ctx, parent);
+}
+void cleanup_target(OpContext *ctx, Inode *parent, Inode *target) {
+    cleanup_parent(ctx, parent);
+    inodes.clear(ctx, target);
+    inodes.unlock(target);
+    inodes.put(ctx, target);
+}
+
 /**
     @brief create an inode at `path` with `type`.
 
@@ -450,99 +497,49 @@ bad:
 
     @return Inode* the created inode, or NULL if failed.
  */
-Inode *create(const char *path, short type, short major, short minor,
-              OpContext *ctx)
-{
-    /* (Final) TODO BEGIN */
-
+Inode *create(const char *path, short type, short major, short minor, OpContext *ctx) {
     char name[FILE_NAME_MAX_LENGTH];
 
+    // 获取父目录 inode
     Inode *parent = nameiparent(path, name, ctx);
-    // Parent dir not found
-    if (!parent) {
-        return NULL;
-    }
+    if (!parent) return NULL;
+
     inodes.lock(parent);
 
+    // 检查父目录是否已存在目标文件
     usize inode_index = inodes.lookup(parent, name, NULL);
     if (inode_index > 0) {
-        inodes.unlock(parent);
-        inodes.put(ctx, parent);
-        Inode *target = inodes.get(inode_index);
-        inodes.lock(target);
-
-        // Check if type matches and if type is valid
-        if (type == target->entry.type) {
-            return target;
-        }
-
-        inodes.unlock(target);
-        inodes.put(ctx, target);
-        // Type mismatch or type invalid (only creating files and dirs are allowed)
-        return NULL;
+        return handle_existing_inode(ctx, parent, inode_index, type);
     }
 
+    // 分配新的 inode
     inode_index = inodes.alloc(ctx, type);
     if (inode_index == 0) {
         printk("PANIC: failed to alloc inode\n");
-        inodes.unlock(parent);
-        inodes.put(ctx, parent);
+        cleanup_parent(ctx, parent);
         return NULL;
     }
 
-    Inode *target = inodes.get(inode_index);
-    inodes.lock(target);
+    // 初始化新 inode
+    Inode *target = initialize_inode(ctx, inode_index, type, major, minor);
 
-    target->entry.type = type;
-    target->entry.major = major;
-    target->entry.minor = minor;
-    target->entry.num_links = 1;
-    inodes.sync(ctx, target, true);
-
-    // Create `.` and `..`
-    if (type == INODE_DIRECTORY) {
-        if (inodes.insert(ctx, target, ".", target->inode_no) < 0 ||
-            inodes.insert(ctx, target, "..", parent->inode_no) < 0) {
-            printk("(warn) failed to alloc . or ..\n");
-
-            // Deconstruct parent
-            inodes.unlock(parent);
-            inodes.put(ctx, parent);
-
-            // Deconstruct self
-            inodes.clear(ctx, target);
-            inodes.unlock(target);
-            inodes.put(ctx, target);
-            return NULL;
-        }
-
-        // We do not increment ref to self again for `.` to avoid circular ref
-        // Increment ref of parent due to `..`
-        parent->entry.num_links++;
-        inodes.sync(ctx, parent, true);
+    // 如果是目录，创建 `.` 和 `..`
+    if (type == INODE_DIRECTORY && !create_dot_entries(ctx, target, parent)) {
+        cleanup_target(ctx, parent, target);
+        return NULL;
     }
 
+    // 将新 inode 插入到父目录
     if (inodes.insert(ctx, parent, name, target->inode_no) < 0) {
         printk("(warn) failed to append new entry to parent\n");
-
-        // Deconstruct parent
-        inodes.unlock(parent);
-        inodes.put(ctx, parent);
-
-        // Deconstruct self
-        inodes.clear(ctx, target);
-        inodes.unlock(target);
-        inodes.put(ctx, target);
+        cleanup_target(ctx, parent, target);
         return NULL;
     }
 
-    // Deconstruct parent
-    inodes.unlock(parent);
-    inodes.put(ctx, parent);
+    cleanup_parent(ctx, parent);
     return target;
-
-    /* (Final) TODO END */
 }
+
 
 define_syscall(openat, int dirfd, const char *path, int omode)
 {
@@ -632,7 +629,6 @@ define_syscall(mknodat, int dirfd, const char *path,
 
     unsigned int ma = major(dev);
     unsigned int mi = minor(dev);
-    // printk("mknodat: path '%s', major:minor %u:%u\n", path, ma, mi);
     OpContext ctx;
     bcache.begin_op(&ctx);
     if ((ip = create(path, INODE_DEVICE, (short)ma, (short)mi, &ctx)) == 0) {
@@ -645,82 +641,53 @@ define_syscall(mknodat, int dirfd, const char *path,
     return 0;
 }
 
-define_syscall(chdir, const char *path)
-{
-    /**
-     * (Final) TODO BEGIN 
-     * 
-     * Change the cwd (current working dictionary) of current process to 'path'.
-     * You may need to do some validations.
-     */
-
+define_syscall(chdir, const char *path) {
     Proc *this = thisproc();
 
+    // 开始操作上下文
     OpContext ctx;
     bcache.begin_op(&ctx);
 
+    // 获取目标路径对应的 inode
     Inode *inode = namei(path, &ctx);
-    if (inode == NULL) {
+    if (!inode) {
         bcache.end_op(&ctx);
-        return -1;
+        return -1; // 路径无效
     }
 
-    inodes.lock(inode);
-
-    // Must be directory
-    if (inode->entry.type != INODE_DIRECTORY) {
-        inodes.unlock(inode);
-        inodes.put(&ctx, inode);
+    // 验证 inode 是否为目录
+    if (!validate_directory(&ctx, inode)) {
         bcache.end_op(&ctx);
-        return -1;
+        return -1; // 非目录类型
     }
 
-    inodes.unlock(inode);
-    inodes.put(&ctx, this->cwd);
-    bcache.end_op(&ctx);
+    // 更新当前工作目录
+    update_cwd(this, &ctx, inode);
 
-    this->cwd = inode;
+    bcache.end_op(&ctx); // 结束操作上下文
     return 0;
-    /* (Final) TODO END */
 }
 
-define_syscall(pipe2, int pipefd[2], __attribute__((unused)) int flags)
+define_syscall(pipe2, int pipefd[2], int flags)
 {
     /* (Final) TODO BEGIN */
     File *f0, *f1;
-    if (pipe_alloc(&f0, &f1) < 0) {
+    if (pipe_alloc(&f0, &f1) < 0)
+        return -1;
+    if ((pipefd[0] = fdalloc(f0)) < 0) {
+        pipe_close(f0->pipe, FALSE);
+        pipe_close(f0->pipe, TRUE);
+        file_close(f0);
+        file_close(f1);
         return -1;
     }
-
-    pipefd[0] = pipefd[1] = -1;
-    pipefd[0] = fdalloc(f0);
-    if (pipefd[0] < 0) {
-        goto failure;
-    }
-
-    pipefd[1] = fdalloc(f1);
-    if (pipefd[1] < 0) {
-        goto failure;
-    }
-
-    return 0;
-
-failure:
-    pipe_close(f0->pipe, 0);
-    pipe_close(f0->pipe, 1);
-
-    if (pipefd[0] >= 0) {
+    if ((pipefd[1] = fdalloc(f1)) < 0) {
+        pipe_close(f0->pipe, FALSE);
+        pipe_close(f0->pipe, TRUE);
         sys_close(pipefd[0]);
-    } else {
-        file_close(f0);
-    }
-
-    if (pipefd[1] >= 0) {
-        sys_close(pipefd[1]);
-    } else {
         file_close(f1);
+        return -1;
     }
-
-    return -1;
+    return 0;
     /* (Final) TODO END */
 }

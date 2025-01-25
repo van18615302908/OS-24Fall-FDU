@@ -26,6 +26,13 @@ void init_syscall();
     }                                            \
     static u64 sys_##name(__VA_ARGS__)
 
+#define ALIGN_UP(addr, size) (((usize)(addr) + (size - 1)) & (-size))
+#define ALIGN_DOWN(addr, size) (((usize)(addr)) & (-size))
+struct iovec {
+    void *iov_base; /* Starting address. */
+    usize iov_len; /* Number of bytes to transfer. */
+};
+
 bool user_readable(const void *start, usize size);
 bool user_writeable(const void *start, usize size);
 usize user_strlen(const char *str, usize maxlen);
