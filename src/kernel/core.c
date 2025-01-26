@@ -34,11 +34,11 @@ NO_RETURN void kernel_entry()
 {
     init_filesystem();
 
-    // printk("Hello world! (Core %lld)\n", cpuid());
-    // proc_test();
-    // vm_test();
-    // user_proc_test();
-    // io_test();
+    printk("Hello world! (Core %lld)\n", cpuid());
+    proc_test();
+    vm_test();
+    user_proc_test();
+    io_test();
 
     // /* LAB 4 TODO 3 BEGIN */
     // Buf mbr_buf;
@@ -66,7 +66,6 @@ NO_RETURN void kernel_entry()
 
     u64 icode_page = (u64)PAGE_BASE(icode);
     for (u64 q = icode_page; q < (u64)eicode; q += PAGE_SIZE) {
-        // Map code to EXTMEM
         vmmap(&proc->pgdir, EXTMEM + q - icode_page, (void *)q, PTE_USER_DATA);
     }
     ASSERT(proc->pgdir.pt);
