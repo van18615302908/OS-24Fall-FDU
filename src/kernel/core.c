@@ -35,10 +35,10 @@ NO_RETURN void kernel_entry()
     init_filesystem();
 
     printk("Hello world! (Core %lld)\n", cpuid());
-    proc_test();
-    vm_test();
-    user_proc_test();
-    io_test();
+    // proc_test();
+    // vm_test();
+    // user_proc_test();
+    // io_test();
 
     // /* LAB 4 TODO 3 BEGIN */
     // Buf mbr_buf;

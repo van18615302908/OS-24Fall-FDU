@@ -157,7 +157,23 @@ NO_RETURN void exit(int code)
     current->exitcode = code;
 
     // 2. clean up the resources
+    for (u64 i = 0; i < NFILE_PROC; i++) {
+        if (current->oftable.files[i]) {
+            file_close(current->oftable.files[i]);
+        }
+    }
 
+    if (current->cwd) {
+        OpContext ctx;
+        bcache.begin_op(&ctx);
+        inodes.put(&ctx, current->cwd);
+        bcache.end_op(&ctx);
+        current->cwd = NULL;
+    }
+
+    // Free pgdir
+    free_sections(&current->pgdir);
+    free_pgdir(&current->pgdir);
     // 3. transfer children to the root_proc, and notify the root_proc if there is zombie
     _for_in_list(p, &current->children)
     {

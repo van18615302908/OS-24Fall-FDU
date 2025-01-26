@@ -99,15 +99,50 @@ void runcmd(struct cmd *cmd)
         fprintf(stderr, "exec %s failed\n", ecmd->argv[0]);
         break;
 
-    case REDIR:
-        rcmd = (struct redircmd *)cmd;
-        close(rcmd->fd);
-        if (open(rcmd->file, rcmd->mode) < 0) {
+    // case REDIR:
+    //     rcmd = (struct redircmd *)cmd;
+    //     close(rcmd->fd);
+    //     if (open(rcmd->file, rcmd->mode) < 0) {
+    //         fprintf(stderr, "open %s failed\n", rcmd->file);
+    //         exit(1);
+    //     }
+    //     runcmd(rcmd->cmd);
+    //     break;
+
+case REDIR:
+    rcmd = (struct redircmd *)cmd;
+
+    // 关闭已有的目标文件描述符
+    close(rcmd->fd);
+
+    // 处理 Here-Doc (<<)
+    if (rcmd->mode == O_RDONLY && rcmd->file[0] == '-') {  // << detected
+        char buffer[512];
+        FILE *input = tmpfile();  // 创建一个临时文件
+        if (!input)
+            PANIC("failed to create temporary file for heredoc");
+
+        fprintf(stderr, "heredoc> ");
+        while (fgets(buffer, sizeof(buffer), stdin)) {
+            // 检查是否遇到结束标记
+            if (strncmp(buffer, rcmd->file + 1, strlen(rcmd->file + 1)) == 0 &&
+                buffer[strlen(rcmd->file + 1)] == '\n') {
+                break;
+            }
+            fputs(buffer, input);  // 将输入写入临时文件
+        }
+        rewind(input);  // 将临时文件的指针重置到开头
+        dup2(fileno(input), rcmd->fd);  // 将临时文件重定向到标准输入
+        fclose(input);
+    } else {
+        // 普通重定向处理 (< 或 > 或 >>)
+        if (open(rcmd->file, rcmd->mode, 0666) < 0) {
             fprintf(stderr, "open %s failed\n", rcmd->file);
             exit(1);
         }
-        runcmd(rcmd->cmd);
-        break;
+    }
+    runcmd(rcmd->cmd);  // 执行嵌套的命令
+    break;
 
     case LIST:
         lcmd = (struct listcmd *)cmd;
@@ -297,12 +332,17 @@ int gettoken(char **ps, char *es, char **q, char **eq)
     case '&':
     case '<':
         s++;
+        if (*s == '<') {
+            ret = '-';
+            s++;
+        }//<<
         break;
     case '>':
         s++;
         if (*s == '>') {
             ret = '+';
             s++;
+            // printf("Detected >> operator\n");
         }
         break;
     default:
@@ -380,6 +420,7 @@ struct cmd *parsepipe(char **ps, char *es)
     return cmd;
 }
 
+
 struct cmd *parseredirs(struct cmd *cmd, char **ps, char *es)
 {
     int tok;
@@ -397,7 +438,10 @@ struct cmd *parseredirs(struct cmd *cmd, char **ps, char *es)
             cmd = redircmd(cmd, q, eq, O_WRONLY | O_CREAT, 1);
             break;
         case '+': // >>
-            cmd = redircmd(cmd, q, eq, O_WRONLY | O_CREAT, 1);
+           cmd = redircmd(cmd, q, eq, O_WRONLY | O_APPEND, 1);
+            break;
+        case '-': // <<
+            cmd = redircmd(cmd, q, eq, O_RDONLY, 0); 
             break;
         }
     }

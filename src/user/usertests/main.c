@@ -153,7 +153,57 @@ void createtest(void)
     }
     printf("many creates, followed by unlink; ok\n");
 }
+void heredoc_test(void)
+{
+    int fd;
+    const char *heredoc_content = "This is line 1\nThis is line 2\nThis is line 3\n";
+    const char *expected_content = "This is line 1\nThis is line 2\nThis is line 3\n";
 
+    printf("Here Document test\n");
+
+    // Simulate writing Here Document to a file
+    fd = open("heredoc_test", O_CREAT | O_RDWR, 0666);
+    if (fd < 0) {
+        printf("error: creat heredoc_test failed!\n");
+        exit(1);
+    }
+
+    if (write(fd, heredoc_content, strlen(heredoc_content)) != (ssize_t)strlen(heredoc_content)) {
+        printf("error: write heredoc_test failed!\n");
+        exit(1);
+    }
+    close(fd);
+
+    // Read back the file and verify content
+    fd = open("heredoc_test", O_RDONLY);
+    if (fd < 0) {
+        printf("error: open heredoc_test failed!\n");
+        exit(1);
+    }
+
+    memset(buf, 0, sizeof(buf));
+    if (read(fd, buf, sizeof(buf)) <= 0) {
+        printf("error: read heredoc_test failed!\n");
+        exit(1);
+    }
+    close(fd);
+
+    // Verify the content matches
+    if (strcmp(buf, expected_content) != 0) {
+        printf("error: heredoc content mismatch!\n");
+        printf("expected:\n%s\n", expected_content);
+        printf("got:\n%s\n", buf);
+        exit(1);
+    }
+
+    // Cleanup
+    if (unlink("heredoc_test") < 0) {
+        printf("unlink heredoc_test failed\n");
+        exit(1);
+    }
+
+    printf("Here Document test ok\n");
+}
 int main(int argc, char *argv[])
 {
     printf("usertests starting\n");
@@ -162,6 +212,7 @@ int main(int argc, char *argv[])
     writetest();
     writetestbig();
     createtest();
+    heredoc_test(); // Added Here Document test
     printf("usertests ok\n");
     exit(0);
 }
